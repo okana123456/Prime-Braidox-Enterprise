@@ -378,11 +378,19 @@ setInterval(()=>{
 window.addEventListener('keydown', e => {
   if(state.session && (e.key === 'F5' || ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='r'))){
     e.preventDefault();
-    toast('Refresh disabled during active session. Use the sign-out button to exit.', 'warn');
+    confirmDialog('Are you sure you want to refresh? You will be returned to where you left off.', () => {
+      sessionStorage.setItem('pb_restore_view', state.view);
+      sessionStorage.setItem('pb_restore_ctx', JSON.stringify(state.viewCtx||null));
+      window.location.reload();
+    }, { title: 'Refresh page?' });
   }
 });
 window.addEventListener('beforeunload', e => {
-  if(state.session){ e.preventDefault(); e.returnValue = ''; }
+  if(state.session){
+    sessionStorage.setItem('pb_restore_view', state.view);
+    sessionStorage.setItem('pb_restore_ctx', JSON.stringify(state.viewCtx||null));
+    e.preventDefault(); e.returnValue = '';
+  }
 });
 
 /* ----- Keepalive: proactively refresh token every 30 min ----- */
@@ -970,67 +978,189 @@ function closeActMenu(){ $('actmenu-root').innerHTML = ''; }
 /* =====================================================================
  * PAGE: DASHBOARD
  * ===================================================================== */
+let _dashFilter = 'today';
+let _dashCustomStart = '', _dashCustomEnd = '';
+
+function dashDateRange(){
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const today = iso(now);
+  if(_dashFilter==='today') return { start: today, end: today };
+  if(_dashFilter==='yesterday'){
+    const y = new Date(now); y.setDate(y.getDate()-1); const yd = iso(y);
+    return { start: yd, end: yd };
+  }
+  if(_dashFilter==='week'){
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_dashFilter==='month'){
+    const d = new Date(now); d.setMonth(d.getMonth()-1);
+    return { start: iso(d), end: today };
+  }
+  if(_dashFilter==='3months'){
+    const d = new Date(now); d.setMonth(d.getMonth()-3);
+    return { start: iso(d), end: today };
+  }
+  if(_dashFilter==='custom'){
+    return { start: _dashCustomStart||today, end: _dashCustomEnd||today };
+  }
+  return { start: today, end: today };
+}
+
 function pageDashboard(){
-  const totalSavings = state.data.savings.reduce((a,b)=>a+Number(b.amount||0),0);
-  const totalRepay = state.data.repayments.reduce((a,b)=>a+Number(b.amount||0),0);
+  const isAdmin = state.staff.role === 'admin';
+  if(!isAdmin){ pageOfficerDashboard(); return; }
+
+  const { start, end } = dashDateRange();
+  const inRange = date => date >= start && date <= end;
+
+  const savings = state.data.savings.filter(s => inRange(s.meeting_date||''));
+  const repayments = state.data.repayments.filter(r => inRange(r.meeting_date||''));
+  const totalSavings = savings.reduce((a,b)=>a+Number(b.amount||0),0);
+  const totalRepay = repayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const activeLoans = state.data.loans.filter(l=>l.status==='active');
-  const outstandingBal = activeLoans.reduce((a,l)=>{
-    return a + (Number(l.total_payable||0) - loanPaid(l.id));
-  }, 0);
-  const interestEarned = state.data.repayments.reduce((a,r)=>a + Number(r.interest||0), 0);
+  const outstandingBal = activeLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
+  const interestEarned = repayments.reduce((a,r)=>a+Number(r.interest||0),0);
   const eligibleCount = state.data.members.filter(m=>memberEligible(m.id)).length;
-  const invValue = state.data.inventory.reduce((a,i)=>a + Number(i.loan_price||0)*Number(i.stock||0), 0);
-  const invCost = state.data.inventory.reduce((a,i)=>a + Number(i.buying_price||0)*Number(i.stock||0), 0);
+  const invValue = state.data.inventory.reduce((a,i)=>a+Number(i.loan_price||0)*Number(i.stock||0),0);
+
+  // Officer performance
+  const officers = state.data.staff.filter(s=>s.role==='officer');
+  const officerPerf = officers.map(o => {
+    const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRange(s.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
+    const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRange(r.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
+    const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
+    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans };
+  }).sort((a,b)=>b.savings-a.savings);
+
+  const filterBtns = [
+    ['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']
+  ];
 
   $('page').innerHTML = `
     <div class="page-head">
-      <div>
-        <h1>Operational overview</h1>
-        <div class="desc">Real-time portfolio status across all groups and members.</div>
-      </div>
+      <div><h1>Operational overview</h1><div class="desc">Real-time portfolio status.</div></div>
     </div>
 
-    <div class="kpi-grid">
-      <div class="kpi k-primary"><div class="l">Total savings collected</div><div class="v">${KES(totalSavings)}</div><div class="d">${state.data.savings.length} entries on record</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;align-items:center">
+      ${filterBtns.map(([k,l])=>`<button class="btn btn-sm ${_dashFilter===k?'btn-primary':'btn-outline'}" onclick="_dashFilter='${k}';pageDashboard()">${l}</button>`).join('')}
+      ${_dashFilter==='custom'?`<input type="date" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomStart=this.value;pageDashboard()" />
+      <span class="muted" style="font-size:12px">to</span>
+      <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageDashboard()" />`:''}
+    </div>
+
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+      <div class="kpi k-primary"><div class="l">Savings collected</div><div class="v">${KES(totalSavings)}</div><div class="d">${savings.length} entries</div></div>
       <div class="kpi"><div class="l">Active loans outstanding</div><div class="v">${KES(outstandingBal)}</div><div class="d">${activeLoans.length} active loans</div></div>
-      <div class="kpi k-success"><div class="l">Repayments received</div><div class="v">${KES(totalRepay)}</div><div class="d">Interest income ${KES(interestEarned)}</div></div>
+      <div class="kpi k-success"><div class="l">Repayments received</div><div class="v">${KES(totalRepay)}</div><div class="d">Interest ${KES(interestEarned)}</div></div>
       <div class="kpi k-warn"><div class="l">Members</div><div class="v">${state.data.members.length}</div><div class="d">${eligibleCount} loan-eligible</div></div>
-      <div class="kpi"><div class="l">Inventory value (loan price)</div><div class="v">${KES(invValue)}</div><div class="d">Cost basis ${KES(invCost)}</div></div>
+      <div class="kpi"><div class="l">Inventory value</div><div class="v">${KES(invValue)}</div><div class="d">${state.data.inventory.length} assets</div></div>
       <div class="kpi k-primary"><div class="l">Groups</div><div class="v">${state.data.groups.length}</div><div class="d">${state.data.groups.filter(g=>g.status==='active').length} active</div></div>
     </div>
 
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-head"><h3>Recent savings activity</h3></div>
-        <div class="table-wrap" style="border:none;border-radius:0">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px">
+      <div class="card" style="min-width:0">
+        <div class="card-head"><h3>Recent savings</h3><div class="sub">${savings.length} entries</div></div>
+        <div style="overflow-x:auto">
           <table class="tbl">
             <thead><tr><th>Date</th><th>Member</th><th>Group</th><th class="num">Amount</th></tr></thead>
             <tbody>
-              ${state.data.savings.slice(0,8).map(s => {
+              ${savings.slice(0,8).map(s => {
                 const m = state.data.members.find(x=>x.id===s.member_id);
                 const g = state.data.groups.find(x=>x.id===s.group_id);
-                return `<tr><td>${fmtDate(s.meeting_date)}</td><td>${m?.full_name||'—'}</td><td>${g?.name||'—'}</td><td class="num">${KES(s.amount)}</td></tr>`;
-              }).join('') || `<tr><td colspan="4" class="empty"><h4>No savings recorded yet</h4><p>Use the Meeting Recorder to capture weekly savings.</p></td></tr>`}
+                return `<tr><td style="white-space:nowrap">${fmtDate(s.meeting_date)}</td><td>${m?.full_name||'—'}</td><td>${g?.name||'—'}</td><td class="num">${KES(s.amount)}</td></tr>`;
+              }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No savings in period</h4></div></td></tr>`}
             </tbody>
           </table>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head"><h3>Active loans summary</h3></div>
-        <div class="table-wrap" style="border:none;border-radius:0">
+      <div class="card" style="min-width:0">
+        <div class="card-head"><h3>Active loans</h3><div class="sub">${activeLoans.length} loans</div></div>
+        <div style="overflow-x:auto">
           <table class="tbl">
             <thead><tr><th>Member</th><th>Asset</th><th class="num">Outstanding</th><th>Status</th></tr></thead>
             <tbody>
               ${activeLoans.slice(0,8).map(l => {
                 const m = state.data.members.find(x=>x.id===l.member_id);
-                const out = Number(l.total_payable||0) - loanPaid(l.id);
-                return `<tr><td>${m?.full_name||'—'}</td><td>${l.asset_name}</td><td class="num">${KES(out)}</td><td><span class="badge b-blue">Active</span></td></tr>`;
-              }).join('') || `<tr><td colspan="4" class="empty"><h4>No active loans</h4><p>Approved orders become active loans automatically.</p></td></tr>`}
+                const out = Number(l.total_payable||0)-loanPaid(l.id);
+                const weeksElapsed = Math.max(0,Math.floor((Date.now()-new Date(l.start_date).getTime())/(7*86400000)));
+                const expected = weeksElapsed*Number(l.weekly_installment||0);
+                const paid = loanPaid(l.id);
+                const behind = Math.max(0,Math.ceil((expected-paid)/Number(l.weekly_installment||1)));
+                const cls = behind>=2?'b-red':behind===1?'b-yellow':'b-green';
+                return `<tr><td>${m?.full_name||'—'}</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.asset_name}</td><td class="num">${KES(out)}</td><td><span class="badge ${cls}">${behind>0?behind+'w behind':'On track'}</span></td></tr>`;
+              }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
             </tbody>
           </table>
         </div>
       </div>
-    </div>`;
+    </div>
+
+    ${officerPerf.length ? `
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3>Loan officer performance</h3><div class="sub">${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</div></div>
+      <div style="overflow-x:auto">
+        <table class="tbl">
+          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th></tr></thead>
+          <tbody>
+            ${officerPerf.map(o=>`<tr>
+              <td><b>${o.name}</b></td>
+              <td class="num">${KES(o.savings)}</td>
+              <td class="num">${KES(o.repayments)}</td>
+              <td class="num">${o.loans}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+  `;
+}
+
+function pageOfficerDashboard(){
+  const me = state.staff;
+  const myGroups = state.data.groups.filter(g=>g.officer_id===me.id);
+  const myMembers = state.data.members.filter(m=>myGroups.some(g=>g.id===m.group_id));
+  const { start, end } = dashDateRange();
+  const inRange = date => date >= start && date <= end;
+  const mySavings = state.data.savings.filter(s=>s.recorded_by===me.id && inRange(s.meeting_date||''));
+  const myRepay = state.data.repayments.filter(r=>r.recorded_by===me.id && inRange(r.meeting_date||''));
+  const myLoans = state.data.loans.filter(l=>l.officer_id===me.id && l.status==='active');
+  const totalSv = mySavings.reduce((a,b)=>a+Number(b.amount||0),0);
+  const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
+
+  const filterBtns = [
+    ['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']
+  ];
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>My dashboard</h1><div class="desc">Your personal performance summary, ${me.full_name}.</div></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px">
+      ${filterBtns.map(([k,l])=>`<button class="btn btn-sm ${_dashFilter===k?'btn-primary':'btn-outline'}" onclick="_dashFilter='${k}';pageDashboard()">${l}</button>`).join('')}
+      ${_dashFilter==='custom'?`<input type="date" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomStart=this.value;pageDashboard()" />
+      <span class="muted" style="font-size:12px">to</span>
+      <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageDashboard()" />`:''}
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi k-primary"><div class="l">My groups</div><div class="v">${myGroups.length}</div></div>
+      <div class="kpi k-success"><div class="l">Savings recorded</div><div class="v">${KES(totalSv)}</div><div class="d">${mySavings.length} entries</div></div>
+      <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">${myRepay.length} entries</div></div>
+      <div class="kpi k-warn"><div class="l">Active loans I manage</div><div class="v">${myLoans.length}</div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3>My groups</h3></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Group</th><th class="num">Members</th><th class="num">Total savings</th><th>Meeting day</th></tr></thead>
+        <tbody>
+          ${myGroups.map(g=>{
+            const mc = state.data.members.filter(m=>m.group_id===g.id).length;
+            return `<tr><td><b>${g.name}</b></td><td class="num">${mc}</td><td class="num">${KES(groupSavingsTotal(g.id))}</td><td>${g.meeting_day||'—'}</td></tr>`;
+          }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No groups assigned</h4></div></td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
 }
 
 /* =====================================================================
@@ -1862,24 +1992,28 @@ function pageInventory(){
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>Asset</th><th>Category</th><th class="num">Buying</th><th class="num">Loan price</th>
-          <th class="num">Margin</th><th class="num">Stock</th><th>Status</th><th></th>
+          <th>Asset</th><th>Category</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Loan price/unit</th>
+          <th class="num">Total cost value</th><th class="num">Total loan value</th><th class="num">Margin</th><th>Status</th><th></th>
         </tr></thead>
         <tbody>
           ${inv.map(a => {
-            const margin = a.loan_price ? ((a.loan_price-a.buying_price)/a.loan_price*100) : 0;
+            const margin = a.loan_price && a.buying_price ? ((a.loan_price-a.buying_price)/a.loan_price*100) : 0;
+            const totalCost = Number(a.buying_price||0)*Number(a.stock||0);
+            const totalLoan = Number(a.loan_price||0)*Number(a.stock||0);
             const status = a.stock===0 ? `<span class="badge b-red">Out of stock</span>` : a.stock<=a.reorder_level ? `<span class="badge b-yellow">Low stock</span>` : `<span class="badge b-green">In stock</span>`;
             return `<tr>
               <td><b>${a.name}</b></td>
               <td>${a.category||'—'}</td>
+              <td class="num">${a.stock}</td>
               <td class="num">${KES(a.buying_price)}</td>
               <td class="num">${KES(a.loan_price)}</td>
+              <td class="num">${KES(totalCost)}</td>
+              <td class="num"><b>${KES(totalLoan)}</b></td>
               <td class="num">${margin.toFixed(1)}%</td>
-              <td class="num">${a.stock}</td>
               <td>${status}</td>
               <td><button class="act-btn" onclick="invActions(event,'${a.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="8"><div class="empty"><h4>No inventory yet</h4><p>Add the assets your business offers as loans.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No inventory yet</h4><p>Add the assets your business offers as loans.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2010,42 +2144,48 @@ function orderActions(ev, id){
 function openOrderForm(){
   modal({
     title:'New member order',
-    body:`<form id="of">
+    body:`
       <div class="field"><label>Member *</label>
-        <select name="member_id" required>
-          <option value="">— Select —</option>
-          ${state.data.members.filter(m=>m.status==='active').map(m=>{
-            const g = state.data.groups.find(x=>x.id===m.group_id);
-            return `<option value="${m.id}">${m.full_name} · ${g?.name||''}</option>`;
-          }).join('')}
-        </select>
+        <div class="search-box" style="position:relative">
+          <input id="ord-mem-search" placeholder="Type member name…" autocomplete="off" style="padding-left:34px" oninput="filterOrderMembers()" />
+          <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
+        </div>
+        <div id="ord-mem-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
+        <input type="hidden" id="ord-mem-id" />
+        <div id="ord-mem-sel" class="muted" style="font-size:12px;margin-top:4px"></div>
       </div>
       <div class="field"><label>Asset *</label>
-        <select name="asset_id" required>
-          <option value="">— Select —</option>
-          ${state.data.inventory.map(a=>`<option value="${a.id}" data-name="${a.name}" data-price="${a.loan_price}">${a.name} — ${KES(a.loan_price)} · stock ${a.stock}</option>`).join('')}
-        </select>
+        <div class="search-box" style="position:relative">
+          <input id="ord-ast-search" placeholder="Type asset name…" autocomplete="off" style="padding-left:34px" oninput="filterOrderAssets()" />
+          <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
+        </div>
+        <div id="ord-ast-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
+        <input type="hidden" id="ord-ast-id" />
+        <div id="ord-ast-sel" class="muted" style="font-size:12px;margin-top:4px"></div>
       </div>
       <div class="grid-2">
-        <div class="field"><label>Quantity</label><input type="number" min="1" name="quantity" value="1" /></div>
-        <div class="field"><label>Order date</label><input type="date" name="ordered_on" value="${todayISO()}" /></div>
+        <div class="field"><label>Quantity</label><input type="number" min="1" id="ord-qty" value="1" /></div>
+        <div class="field"><label>Order date</label><input type="date" id="ord-date" value="${todayISO()}" /></div>
       </div>
-      <div class="field"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
-    </form>`,
+      <div class="field"><label>Notes</label><textarea id="ord-notes" rows="2"></textarea></div>
+    `,
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label:'Submit order', cls:'btn-primary', onClick: async () => {
-        const fd = new FormData($('of')); const row = Object.fromEntries(fd);
-        const member = state.data.members.find(x=>x.id===row.member_id);
-        const asset = state.data.inventory.find(x=>x.id===row.asset_id);
-        if(!member || !asset) return toast('Select member and asset.','error');
+        if(!(await ensureFreshToken())) return;
+        const member_id = $('ord-mem-id').value;
+        const asset_id = $('ord-ast-id').value;
+        const member = state.data.members.find(x=>x.id===member_id);
+        const asset = state.data.inventory.find(x=>x.id===asset_id);
+        if(!member) return toast('Please select a member.','error');
+        if(!asset) return toast('Please select an asset.','error');
         if(!memberEligible(member.id)){
           if(!confirm(`This member has not yet reached the savings eligibility threshold of ${KES(state.settings?.savings_threshold||900)}. Submit order anyway?`)) return;
         }
         const ins = {
           member_id: member.id, group_id: member.group_id, asset_id: asset.id, asset_name: asset.name,
-          quantity: Number(row.quantity)||1, ordered_on: row.ordered_on, status:'pending',
-          recorded_by: state.staff.id, notes: row.notes||null
+          quantity: Number($('ord-qty').value)||1, ordered_on: $('ord-date').value, status:'pending',
+          recorded_by: state.staff.id, notes: $('ord-notes').value||null
         };
         const { data, error } = await sb.from('pb_orders').insert(ins).select().single();
         if(error) return toast(error.message,'error');
@@ -2054,6 +2194,43 @@ function openOrderForm(){
       }}
     ]
   });
+  setTimeout(()=>{
+    $('ord-mem-search').addEventListener('focus', filterOrderMembers);
+    $('ord-ast-search').addEventListener('focus', filterOrderAssets);
+    document.addEventListener('click', e => {
+      if(!e.target.closest('#ord-mem-list') && e.target.id!=='ord-mem-search') { const el=$('ord-mem-list'); if(el) el.style.display='none'; }
+      if(!e.target.closest('#ord-ast-list') && e.target.id!=='ord-ast-search') { const el=$('ord-ast-list'); if(el) el.style.display='none'; }
+    });
+  }, 50);
+}
+function filterOrderMembers(){
+  const q = ($('ord-mem-search').value||'').toLowerCase();
+  const list = $('ord-mem-list'); if(!list) return;
+  const matches = state.data.members.filter(m=>m.status==='active' && (m.full_name.toLowerCase().includes(q)||(m.national_id||'').includes(q))).slice(0,10);
+  list.style.display = matches.length ? 'block' : 'none';
+  list.innerHTML = matches.map(m=>{
+    const g = state.data.groups.find(x=>x.id===m.group_id);
+    return `<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="selectOrderMember('${m.id}','${m.full_name.replace(/'/g,"\\'")}','${g?.name||''}')">${m.full_name}<span class="muted" style="font-size:11px;margin-left:8px">${g?.name||''}</span></div>`;
+  }).join('');
+}
+function selectOrderMember(id, name, groupName){
+  $('ord-mem-id').value = id;
+  $('ord-mem-search').value = name;
+  $('ord-mem-sel').textContent = groupName ? '✓ '+name+' · '+groupName : '✓ '+name;
+  $('ord-mem-list').style.display = 'none';
+}
+function filterOrderAssets(){
+  const q = ($('ord-ast-search').value||'').toLowerCase();
+  const list = $('ord-ast-list'); if(!list) return;
+  const matches = state.data.inventory.filter(a=>a.name.toLowerCase().includes(q)).slice(0,10);
+  list.style.display = matches.length ? 'block' : 'none';
+  list.innerHTML = matches.map(a=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="selectOrderAsset('${a.id}','${a.name.replace(/'/g,"\\'")}',${a.loan_price},${a.stock})">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">${KES(a.loan_price)} · stock ${a.stock}</span></div>`).join('');
+}
+function selectOrderAsset(id, name, price, stock){
+  $('ord-ast-id').value = id;
+  $('ord-ast-search').value = name;
+  $('ord-ast-sel').textContent = '✓ '+name+' · '+KES(price)+' · stock: '+stock;
+  $('ord-ast-list').style.display = 'none';
 }
 function rejectOrder(o){
   modal({
@@ -2091,12 +2268,16 @@ function approveOrder(o){
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label:'Issue loan', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
         const weekly = Number($('wi').value)||0;
         const start = new Date($('sd').value);
         const principal = asset.loan_price * o.quantity;
         const r = computeSchedule(principal, weekly, 'flat', start);
         const max = state.settings?.max_loan_weeks||52;
-        if(r.weeks > max){ if(!confirm(`Schedule exceeds ${max} weeks. Issue anyway?`)) return; }
+        if(weekly <= 0) return toast('Weekly installment must be greater than zero.','error');
+        if(r.weeks > max){
+          toast(`Warning: schedule is ${r.weeks} weeks, which exceeds the configured maximum of ${max} weeks. Issuing anyway.`, 'warn');
+        }
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
         const loan = {
           member_id: member.id, group_id: member.group_id, officer_id: state.staff.id,
@@ -2105,8 +2286,7 @@ function approveOrder(o){
           start_date: $('sd').value, expected_end_date: end.toISOString().slice(0,10), status:'active'
         };
         const { data, error } = await sb.from('pb_loans').insert(loan).select().single();
-        if(error) return toast(error.message,'error');
-        // deduct stock & mark order fulfilled
+        if(error) return toast('Loan save failed: '+error.message,'error');
         await sb.from('pb_inventory').update({ stock: asset.stock - o.quantity }).eq('id', asset.id);
         asset.stock -= o.quantity;
         await sb.from('pb_orders').update({ status:'fulfilled', approved_by: state.staff.id }).eq('id', o.id);
@@ -2131,49 +2311,83 @@ function approveOrder(o){
  * ===================================================================== */
 function pageReports(){
   $('page').innerHTML = `
-    <div class="page-head"><div><h1>Reports</h1><div class="desc">Export operational data for reconciliation and review.</div></div></div>
+    <div class="page-head"><div><h1>Reports</h1><div class="desc">Preview and export operational data.</div></div></div>
     <div class="grid-3">
       ${[
-        ['Savings ledger','All savings entries across groups','savings'],
-        ['Repayments register','All loan repayments','repayments'],
+        ['Savings ledger','All savings entries across groups and members','savings'],
+        ['Repayments register','All loan repayments recorded','repayments'],
         ['Active loans','Outstanding balances and weeks remaining','loans'],
         ['Members directory','Full member list with contacts','members'],
-        ['Inventory valuation','Cost vs loan price snapshot','inventory'],
+        ['Inventory valuation','Stock quantities, cost and loan values','inventory'],
         ['Orders log','Every order placed and its status','orders']
       ].map(([t,d,k]) => `<div class="card card-pad">
         <h3 style="margin:0 0 4px">${t}</h3>
         <div class="muted" style="font-size:12px;margin-bottom:14px">${d}</div>
-        <button class="btn btn-outline btn-block" onclick="exportReport('${k}')">Export to Excel</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline" style="flex:1" onclick="previewReport('${k}')">Preview</button>
+          <button class="btn btn-primary" style="flex:1" onclick="exportReport('${k}')">Export Excel</button>
+        </div>
       </div>`).join('')}
     </div>
   `;
 }
-function exportReport(kind){
-  const wb = XLSX.utils.book_new();
-  let rows = [];
-  if(kind==='savings') rows = state.data.savings.map(s => {
+function buildReportRows(kind){
+  if(kind==='savings') return state.data.savings.map(s => {
     const m = state.data.members.find(x=>x.id===s.member_id), g = state.data.groups.find(x=>x.id===s.group_id);
-    return { Date:s.meeting_date, Member:m?.full_name, ID:m?.national_id, Group:g?.name, Amount:Number(s.amount) };
+    return { Date:s.meeting_date, Member:m?.full_name||'—', ID:m?.national_id||'—', Group:g?.name||'—', Amount:Number(s.amount) };
   });
-  if(kind==='repayments') rows = state.data.repayments.map(r => {
+  if(kind==='repayments') return state.data.repayments.map(r => {
     const m = state.data.members.find(x=>x.id===r.member_id);
-    return { Date:r.meeting_date, Member:m?.full_name, Amount:Number(r.amount), Principal:Number(r.principal), Interest:Number(r.interest) };
+    return { Date:r.meeting_date, Member:m?.full_name||'—', Amount:Number(r.amount), Principal:Number(r.principal), Interest:Number(r.interest) };
   });
-  if(kind==='loans') rows = state.data.loans.map(l => {
+  if(kind==='loans') return state.data.loans.map(l => {
     const m = state.data.members.find(x=>x.id===l.member_id);
-    return { Member:m?.full_name, Asset:l.asset_name, LoanValue:Number(l.loan_value), Weekly:Number(l.weekly_installment), Paid:loanPaid(l.id), Outstanding:Number(l.total_payable)-loanPaid(l.id), Status:l.status };
+    return { Member:m?.full_name||'—', Asset:l.asset_name, LoanValue:Number(l.loan_value), Weekly:Number(l.weekly_installment), Paid:loanPaid(l.id), Outstanding:Number(l.total_payable)-loanPaid(l.id), Status:l.status };
   });
-  if(kind==='members') rows = state.data.members.map(m => {
+  if(kind==='members') return state.data.members.map(m => {
     const g = state.data.groups.find(x=>x.id===m.group_id);
-    return { Name:m.full_name, ID:m.national_id, Phone:m.phone, Group:g?.name, Savings:memberSavings(m.id), Eligible:memberEligible(m.id)?'Yes':'No', Status:m.status };
+    return { Name:m.full_name, ID:m.national_id, Phone:m.phone, Group:g?.name||'—', Savings:memberSavings(m.id), Eligible:memberEligible(m.id)?'Yes':'No', Status:m.status };
   });
-  if(kind==='inventory') rows = state.data.inventory.map(a => ({
-    Name:a.name, Category:a.category, Buying:Number(a.buying_price), LoanPrice:Number(a.loan_price), Stock:a.stock, Value:Number(a.loan_price)*a.stock
+  if(kind==='inventory') return state.data.inventory.map(a => ({
+    Name:a.name, Category:a.category, Qty:a.stock, CostPerUnit:Number(a.buying_price), LoanPricePerUnit:Number(a.loan_price),
+    TotalCostValue:Number(a.buying_price)*a.stock, TotalLoanValue:Number(a.loan_price)*a.stock
   }));
-  if(kind==='orders') rows = state.data.orders.map(o => {
+  if(kind==='orders') return state.data.orders.map(o => {
     const m = state.data.members.find(x=>x.id===o.member_id);
-    return { Date:o.ordered_on, Member:m?.full_name, Asset:o.asset_name, Qty:o.quantity, Status:o.status };
+    return { Date:o.ordered_on, Member:m?.full_name||'—', Asset:o.asset_name, Qty:o.quantity, Status:o.status };
   });
+  return [];
+}
+function previewReport(kind){
+  const rows = buildReportRows(kind);
+  if(!rows.length) return toast('No data to preview for this report.','warn');
+  const cols = Object.keys(rows[0]);
+  const titles = { savings:'Savings Ledger', repayments:'Repayments Register', loans:'Active Loans', members:'Members Directory', inventory:'Inventory Valuation', orders:'Orders Log' };
+  modal({
+    title: `Preview: ${titles[kind]||kind}`,
+    size:'lg',
+    body:`<div class="muted" style="font-size:12px;margin-bottom:10px">${rows.length} records. Showing up to 50.</div>
+    <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+      <table class="tbl" style="min-width:500px">
+        <thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${rows.slice(0,50).map(r=>`<tr>${cols.map(c=>{
+          const v = r[c];
+          const isNum = typeof v === 'number';
+          return `<td${isNum?' class="num"':''}>${isNum?KES(v):v}</td>`;
+        }).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>
+    ${rows.length > 50 ? `<div class="muted" style="font-size:12px;margin-top:8px">${rows.length-50} more rows not shown. Export to Excel for full data.</div>` : ''}`,
+    actions:[
+      { label:'Close', onClick: closeModal },
+      { label:'Export to Excel', cls:'btn-primary', onClick: ()=>{ closeModal(); exportReport(kind); } }
+    ]
+  });
+}
+function exportReport(kind){
+  const rows = buildReportRows(kind);
+  if(!rows.length) return toast('No data to export.','warn');
+  const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(rows);
   XLSX.utils.book_append_sheet(wb, ws, kind);
   XLSX.writeFile(wb, `${kind}_${todayISO()}.xlsx`);
@@ -2547,8 +2761,11 @@ function viewPurchase(p){
   });
 }
 let _purLines = [];
+let _purNewItems = []; // track newly added items not yet in inventory
+
 function openPurchaseForm(){
   _purLines = [];
+  _purNewItems = [];
   const sups = state.data.suppliers || [];
   modal({
     title:'New purchase / receive stock', size:'lg',
@@ -2568,7 +2785,7 @@ function openPurchaseForm(){
       <button type="button" class="btn btn-outline btn-sm" onclick="purAddLine()">+ Add line</button>
       <div class="divider"></div>
       <div class="grid-2">
-        <div class="field"><label>Total (auto)</label><input id="pur-total-auto" disabled value="0" /></div>
+        <div class="field"><label>Total (auto-calculated)</label><input id="pur-total-auto" disabled value="0" /></div>
         <div class="field"><label>Override total (optional)</label><input id="pur-total-override" type="number" min="0" step="0.01" placeholder="Leave blank to use auto total" /></div>
       </div>
       <div class="field"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
@@ -2581,36 +2798,56 @@ function openPurchaseForm(){
   purAddLine();
 }
 function purAddLine(){
-  _purLines.push({ asset_id:'', asset_name:'', quantity:1, cost_per_unit:0, subtotal:0, batch_no:'' });
+  _purLines.push({ asset_id:'', asset_name:'', isNew:false, quantity:1, cost_per_unit:0, subtotal:0, batch_no:'' });
   renderPurLines();
 }
 function renderPurLines(){
   const host = $('pur-lines');
-  host.innerHTML = _purLines.map((l,i)=>`<div class="card card-pad" style="margin-bottom:8px;background:var(--surface-2)">
+  if(!host) return;
+  host.innerHTML = _purLines.map((l,i)=>`<div class="card card-pad" style="margin-bottom:8px;background:var(--surface-2)" id="pur-line-${i}">
     <div class="grid-2">
-      <div class="field"><label>Asset</label>
-        <select onchange="purLineAsset(${i}, this.value)">
-          <option value="">— Pick asset —</option>
-          ${state.data.inventory.map(a=>`<option value="${a.id}" ${l.asset_id===a.id?'selected':''}>${a.name} (current cost ${KES(a.buying_price)})</option>`).join('')}
-        </select>
+      <div class="field" style="position:relative">
+        <label>Asset ${l.isNew?'<span class="badge b-green" style="margin-left:4px;font-size:10px">New item</span>':''}</label>
+        <input id="pur-ast-q-${i}" placeholder="Search or type new asset name…" value="${l.asset_name||''}" autocomplete="off"
+          oninput="purAssetSearch(${i},this.value)" onfocus="purAssetSearch(${i},this.value)" />
+        <div id="pur-ast-dd-${i}" style="position:absolute;z-index:50;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);max-height:160px;overflow-y:auto;display:none;box-shadow:var(--shadow-md)"></div>
       </div>
-      <div class="field"><label>Quantity</label><input type="number" min="0" step="0.01" value="${l.quantity}" oninput="purLineUpd(${i},'quantity',this.value)" /></div>
+      <div class="field"><label>Quantity received</label><input type="number" min="0.01" step="0.01" value="${l.quantity}" oninput="purLineUpd(${i},'quantity',this.value)" /></div>
       <div class="field"><label>Cost per unit (KES)</label><input type="number" min="0" step="0.01" value="${l.cost_per_unit}" oninput="purLineUpd(${i},'cost_per_unit',this.value)" /></div>
-      <div class="field"><label>Subtotal (override)</label><input type="number" min="0" step="0.01" value="${l.subtotal}" oninput="purLineUpd(${i},'subtotal',this.value,true)" /></div>
+      <div class="field"><label>Line total = <b>${KES(Number(l.quantity||0)*Number(l.cost_per_unit||0))}</b></label><input type="number" min="0" step="0.01" value="${l.subtotal||0}" placeholder="Override line total" oninput="purLineUpd(${i},'subtotal',this.value,true)" /></div>
       <div class="field"><label>Batch / lot</label><input value="${l.batch_no||''}" oninput="purLineUpd(${i},'batch_no',this.value)" /></div>
       <div class="field" style="display:flex;align-items:flex-end"><button type="button" class="btn btn-outline btn-sm" onclick="purRemoveLine(${i})">Remove</button></div>
     </div>
   </div>`).join('');
   const total = _purLines.reduce((a,b)=>a+Number(b.subtotal||0),0);
   if($('pur-total-auto')) $('pur-total-auto').value = total.toFixed(2);
+  // Re-attach document click to close dropdowns
+  _purLines.forEach((_,i)=>{
+    setTimeout(()=>{
+      const inp = $(`pur-ast-q-${i}`);
+      if(inp) inp.addEventListener('blur', ()=>{ setTimeout(()=>{ const dd=$(`pur-ast-dd-${i}`); if(dd) dd.style.display='none'; },150); });
+    },0);
+  });
 }
-function purLineAsset(i, id){
-  const a = state.data.inventory.find(x=>x.id===id);
-  if(!a){ _purLines[i].asset_id=''; _purLines[i].asset_name=''; renderPurLines(); return; }
-  _purLines[i].asset_id = a.id; _purLines[i].asset_name = a.name;
-  if(!_purLines[i].cost_per_unit) _purLines[i].cost_per_unit = Number(a.buying_price)||0;
-  _purLines[i].subtotal = Number(_purLines[i].quantity||0) * Number(_purLines[i].cost_per_unit||0);
+function purAssetSearch(i, q){
+  const dd = $(`pur-ast-dd-${i}`); if(!dd) return;
+  _purLines[i].asset_name = q;
+  const matches = state.data.inventory.filter(a=>a.name.toLowerCase().includes((q||'').toLowerCase())).slice(0,8);
+  const showAdd = q && q.trim().length > 1 && !state.data.inventory.find(a=>a.name.toLowerCase()===q.toLowerCase());
+  if(!matches.length && !showAdd){ dd.style.display='none'; return; }
+  dd.style.display='block';
+  dd.innerHTML = matches.map(a=>`<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="purSelectAsset(${i},'${a.id}','${a.name.replace(/'/g,"\\'")}',${ a.buying_price},false)">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">cost ${KES(a.buying_price)} · stock ${a.stock}</span></div>`).join('')
+    + (showAdd ? `<div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600" onmousedown="purSelectAsset(${i},'','${q.replace(/'/g,"\\'")}',0,true)">+ Add as new item: "${q}"</div>` : '');
+}
+function purSelectAsset(i, id, name, defaultCost, isNew){
+  _purLines[i].asset_id = id;
+  _purLines[i].asset_name = name;
+  _purLines[i].isNew = isNew;
+  if(!_purLines[i].cost_per_unit) _purLines[i].cost_per_unit = Number(defaultCost)||0;
+  _purLines[i].subtotal = Number(_purLines[i].quantity||0)*Number(_purLines[i].cost_per_unit||0);
   renderPurLines();
+  const inp = $(`pur-ast-q-${i}`); if(inp) inp.value = name;
+  const dd = $(`pur-ast-dd-${i}`); if(dd) dd.style.display='none';
 }
 function purLineUpd(i, key, val, fromSubtotal){
   _purLines[i][key] = key==='batch_no' ? val : (val === '' ? 0 : Number(val));
@@ -2624,10 +2861,11 @@ function purLineUpd(i, key, val, fromSubtotal){
 }
 function purRemoveLine(i){ _purLines.splice(i,1); renderPurLines(); }
 async function submitPurchase(){
+  if(!(await ensureFreshToken())) return;
   const fd = new FormData($('pur-f'));
   const row = Object.fromEntries(fd);
   if(!row.supplier_id) return toast('Choose a supplier.','error');
-  const validLines = _purLines.filter(l => l.asset_id && Number(l.quantity)>0);
+  const validLines = _purLines.filter(l => l.asset_name && Number(l.quantity)>0);
   if(!validLines.length) return toast('Add at least one line item.','error');
   const auto = validLines.reduce((a,b)=>a+Number(b.subtotal||0),0);
   const override = Number($('pur-total-override').value)||0;
@@ -2643,15 +2881,49 @@ async function submitPurchase(){
   const { data: created, error } = await sb.from('pb_purchases').insert(purchase).select().single();
   if(error) return toast(error.message,'error');
   if(validLines.length){
-    const lineRows = validLines.map(l => ({ purchase_id: created.id, asset_id:l.asset_id, asset_name:l.asset_name, quantity:l.quantity, cost_per_unit:l.cost_per_unit, subtotal:l.subtotal, batch_no:l.batch_no||null }));
+    const lineRows = validLines.map(l => ({
+      purchase_id: created.id, asset_id: l.asset_id||null, asset_name: l.asset_name,
+      quantity: Number(l.quantity), cost_per_unit: Number(l.cost_per_unit),
+      subtotal: Number(l.subtotal)||Number(l.quantity)*Number(l.cost_per_unit),
+      batch_no: l.batch_no||null
+    }));
     await sb.from('pb_purchase_lines').insert(lineRows);
   }
   for(const l of validLines){
-    const a = state.data.inventory.find(x=>x.id===l.asset_id);
-    if(!a) continue;
-    const newStock = Number(a.stock||0) + Number(l.quantity||0);
-    await sb.from('pb_inventory').update({ stock: newStock, buying_price: Number(l.cost_per_unit) }).eq('id', a.id);
-    a.stock = newStock; a.buying_price = Number(l.cost_per_unit);
+    const costPerUnit = Number(l.cost_per_unit)||0;
+    const qty = Number(l.quantity)||0;
+    if(l.isNew || !l.asset_id){
+      // New item: create inventory record
+      const newRow = {
+        name: l.asset_name, category: 'Other', stock: qty,
+        buying_price: costPerUnit,
+        loan_price: Math.round(costPerUnit * 1.15 * 100) / 100, // default 15% margin
+        reorder_level: 5
+      };
+      const { data: newAsset, error: ae } = await sb.from('pb_inventory').insert(newRow).select().single();
+      if(!ae && newAsset){
+        state.data.inventory.unshift(newAsset);
+        toast(`New inventory item "${l.asset_name}" added.`, 'info');
+      }
+    } else {
+      const a = state.data.inventory.find(x=>x.id===l.asset_id);
+      if(!a) continue;
+      const prevStock = Number(a.stock||0);
+      const newStock = prevStock + qty;
+      // Weighted average cost for buying_price
+      const prevCost = Number(a.buying_price||0);
+      const weightedCost = prevStock > 0
+        ? Math.round(((prevCost * prevStock) + (costPerUnit * qty)) / newStock * 100) / 100
+        : costPerUnit;
+      // Scale loan_price proportionally if buying_price changed
+      const prevLoanPrice = Number(a.loan_price||0);
+      const margin = prevCost > 0 ? prevLoanPrice / prevCost : 1.15;
+      const newLoanPrice = Math.round(weightedCost * margin * 100) / 100;
+      await sb.from('pb_inventory').update({
+        stock: newStock, buying_price: weightedCost, loan_price: newLoanPrice
+      }).eq('id', a.id);
+      a.stock = newStock; a.buying_price = weightedCost; a.loan_price = newLoanPrice;
+    }
   }
   state.data.purchases.unshift(created);
   audit('purchase_create','pb_purchases',created.id, null, { total, lines: validLines.length });
@@ -2712,19 +2984,32 @@ function openReconForm(){
       </div>
       <div class="field"><label>Meeting date *</label><input type="date" name="meeting_date" value="${todayISO()}" required onchange="reconAutoTotals()" /></div>
       <div class="grid-2">
-        <div class="field"><label>Total savings collected (KES)</label><input id="rec-sv" name="total_savings" type="number" min="0" step="0.01" value="0" oninput="reconRecalc()" /></div>
-        <div class="field"><label>Total repayments collected (KES)</label><input id="rec-rp" name="total_repayments" type="number" min="0" step="0.01" value="0" oninput="reconRecalc()" /></div>
+        <div class="field">
+          <label>Total savings collected (KES)</label>
+          <input id="rec-sv" name="total_savings" type="number" min="0" step="0.01" value="0" oninput="reconRecalc()" />
+          <div class="helper">Auto-filled from meeting records. Adjust if cash collected differs.</div>
+        </div>
+        <div class="field">
+          <label>Total repayments collected (KES)</label>
+          <input id="rec-rp" name="total_repayments" type="number" min="0" step="0.01" value="0" oninput="reconRecalc()" />
+          <div class="helper">Auto-filled from meeting records. Adjust if cash collected differs.</div>
+        </div>
       </div>
-      <div class="field"><label>Grand total (auto)</label><input id="rec-gt" disabled value="0" /></div>
+      <div class="field"><label>Grand total (auto-calculated)</label><input id="rec-gt" disabled value="0" /></div>
       <div class="grid-2">
-        <div class="field"><label>M-Pesa reference</label><input name="mpesa_reference" /></div>
-        <div class="field"><label>Date remitted</label><input type="date" name="remitted_on" value="${todayISO()}" /></div>
+        <div class="field">
+          <label>M-Pesa reference number</label>
+          <input name="mpesa_reference" placeholder="e.g. QHJ4KL2MPX" />
+          <div class="helper">The M-Pesa confirmation code the chairman sends after remitting via Paybill. Found in the SMS sent to the chairman's phone after payment.</div>
+        </div>
+        <div class="field"><label>Date remitted to Paybill</label><input type="date" name="remitted_on" value="${todayISO()}" /></div>
       </div>
       <div class="field"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
     </form>`,
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label:'Save', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
         const fd = new FormData($('rec-f')); const row = Object.fromEntries(fd);
         ['total_savings','total_repayments'].forEach(k => row[k] = Number(row[k])||0);
         row.grand_total = row.total_savings + row.total_repayments;
@@ -2744,12 +3029,17 @@ function reconRecalc(){
 }
 function reconAutoTotals(groupId){
   const f = $('rec-f'); if(!f) return;
-  const gid = groupId || f.group_id?.value;
-  const date = f.meeting_date?.value;
+  const gid = groupId || f.querySelector('[name="group_id"]')?.value;
+  const date = f.querySelector('[name="meeting_date"]')?.value;
   if(!gid || !date) return;
   const sv = state.data.savings.filter(s=>s.group_id===gid && s.meeting_date===date).reduce((a,b)=>a+Number(b.amount||0),0);
   const rp = state.data.repayments.filter(r=>r.group_id===gid && r.meeting_date===date).reduce((a,b)=>a+Number(b.amount||0),0);
-  $('rec-sv').value = sv; $('rec-rp').value = rp; reconRecalc();
+  if($('rec-sv')) $('rec-sv').value = sv;
+  if($('rec-rp')) $('rec-rp').value = rp;
+  reconRecalc();
+  if(sv > 0 || rp > 0){
+    toast(`Auto-filled from meeting on ${date}: savings ${KES(sv)}, repayments ${KES(rp)}.`, 'info');
+  }
 }
 
 /* =====================================================================
@@ -2769,6 +3059,16 @@ function reconAutoTotals(groupId){
     flushQueue();
   }
   render();
+  // Restore view position after a page refresh
+  const restoreView = sessionStorage.getItem('pb_restore_view');
+  const restoreCtx = sessionStorage.getItem('pb_restore_ctx');
+  if(state.session && restoreView){
+    sessionStorage.removeItem('pb_restore_view');
+    sessionStorage.removeItem('pb_restore_ctx');
+    state.view = restoreView;
+    try { state.viewCtx = restoreCtx ? JSON.parse(restoreCtx) : null; } catch{ state.viewCtx = null; }
+    render();
+  }
   if(!navigator.onLine) setBanner('You are offline. Cached data shown. Changes will be queued.');
 })();
 </script>
