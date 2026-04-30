@@ -277,7 +277,7 @@ const KEEPALIVE_MS = 30 * 60 * 1000;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    persistSession: true, autoRefreshToken: true, detectSessionInUrl: false,
+    persistSession: true, autoRefreshToken: true, detectSessionInUrl: true,
     storageKey: 'pb-main-auth'
   }
 });
@@ -287,6 +287,9 @@ const sbAdmin = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     storageKey: 'pb-admin-noauth', storage: { getItem:()=>null, setItem:()=>{}, removeItem:()=>{} }
   }
 });
+function authRedirectUrl(){
+  return window.location.origin + window.location.pathname;
+}
 
 /* ----- Storage helpers (business-scoped, quota-safe) ----- */
 const sk = k => `pb_${BIZ_ID}_${k}`;
@@ -476,44 +479,57 @@ async function registerBusiness({ businessName, adminName, email, password, key 
   if(!navigator.onLine) return { ok:false, error:'An internet connection is required to register a new business.' };
   email = email.trim().toLowerCase();
 
-  // 1. Create the auth user (Supabase will send a confirmation email automatically
-  //    when "Confirm email" is enabled in Authentication settings).
+  let userId = null;
+  let session = null;
+
+  // 1. Create the authentication user. If a previous attempt already created
+  //    the auth account, sign in and complete the missing staff provisioning.
   const { data: authData, error: authErr } = await sb.auth.signUp({
     email, password,
-    options: { emailRedirectTo: window.location.href, data: { full_name: adminName, business_name: businessName } }
+    options: {
+      emailRedirectTo: authRedirectUrl(),
+      data: { full_name: adminName, business_name: businessName }
+    }
   });
-  if(authErr) return { ok:false, error: authErr.message };
-  const userId = authData.user?.id;
+
+  if(authErr){
+    const msg = authErr.message || '';
+    if(/already|registered|exists/i.test(msg)){
+      const { data: loginData, error: loginErr } = await sb.auth.signInWithPassword({ email, password });
+      if(loginErr){
+        return { ok:false, error:'This email already has an authentication account. If you have already received the confirmation email, click Confirm email first, then return here and press Register business again with the same email, password and registration key.' };
+      }
+      userId = loginData.user?.id || loginData.session?.user?.id;
+      session = loginData.session || null;
+    } else {
+      return { ok:false, error: msg };
+    }
+  } else {
+    userId = authData.user?.id;
+    session = authData.session || null;
+  }
+
   if(!userId) return { ok:false, error:'Authentication account could not be created.' };
 
-  // 2. Create the business record.
-  const { data: biz, error: bizErr } = await sb.from('pb_businesses').insert({
-    name: businessName, admin_email: email, registration_key_used: key
-  }).select().maybeSingle();
-  if(bizErr) return { ok:false, error:'Business record could not be created: ' + bizErr.message };
-
-  // 3. Create the admin staff row linked to this business and auth user.
-  const { data: staff, error: stErr } = await sb.from('pb_staff').insert({
-    auth_user_id: userId, business_id: biz.id,
-    full_name: adminName, email, role:'admin', status:'active'
-  }).select().maybeSingle();
-  if(stErr) return { ok:false, error:'Staff registry could not be created: ' + stErr.message };
-
-  // 4. Grant full default permissions to the admin.
-  await sb.from('pb_permissions').insert({
-    staff_id: staff.id,
-    can_record_savings:true, can_record_repayments:true, can_submit_orders:true,
-    can_approve_orders:true, can_view_reports:true, can_manage_inventory:true,
-    can_manage_suppliers:true
+  // 2. Provision business, admin staff registry, permissions and settings in one
+  //    server-side database call, so email confirmation cannot leave the account
+  //    without a matching staff registry row.
+  const { error: provisionErr } = await sb.rpc('pb_register_business_admin', {
+    p_auth_user_id: userId,
+    p_business_name: businessName,
+    p_admin_name: adminName,
+    p_admin_email: email,
+    p_registration_key: key
   });
+  if(provisionErr) return { ok:false, error:'Business provisioning failed: ' + provisionErr.message };
 
-  // 5. Seed business settings.
-  await sb.from('pb_settings').upsert({
-    id: 'biz_' + biz.id, business_name: businessName,
-    savings_threshold:900, registration_fee:200, max_loan_weeks:52, monthly_interest_rate:0.025
-  });
+  if(session){
+    state.session = session;
+    const ok = await loadStaff();
+    if(ok){ await afterLogin(false); return { ok:true, signedIn:true }; }
+  }
 
-  return { ok:true, requiresEmailConfirmation: !authData.session };
+  return { ok:true, requiresEmailConfirmation: !session };
 }
 
 async function afterLogin(offline){
@@ -694,7 +710,7 @@ function renderAuth(){
     $('form-forgot').addEventListener('submit', async e => {
       e.preventDefault();
       const email = new FormData(e.target).get('email');
-      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.href });
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: authRedirectUrl() });
       if(error) $('auth-msg').innerHTML = `<div class="auth-error">${error.message}</div>`;
       else $('auth-msg').innerHTML = `<div class="auth-info">If an account exists for that address, a reset link has been sent.</div>`;
     });
@@ -714,6 +730,8 @@ function renderAuth(){
       if(!res.ok){
         $('auth-msg').innerHTML = `<div class="auth-error">${res.error}</div>`;
         btn.disabled = false; btn.innerHTML = 'Register business';
+      } else if(res.signedIn){
+        toast('Business registered and signed in successfully.', 'success');
       } else {
         $('auth-msg').innerHTML = `<div class="auth-info">Business registered successfully. ${res.requiresEmailConfirmation ? 'A confirmation email has been sent to the administrator address. Please confirm the email, then return here to sign in.' : 'You may now sign in.'}</div>`;
         e.target.reset();
@@ -2177,10 +2195,10 @@ function openStaffForm(s=null){
           closeModal(); render(); toast('Staff updated','success'); return;
         }
         // Create auth user via admin client (does NOT log out current user)
-        const { data, error } = await sbAdmin.auth.signUp({ email: row.email.toLowerCase(), password: row.password });
+        const { data, error } = await sbAdmin.auth.signUp({ email: row.email.toLowerCase(), password: row.password, options: { emailRedirectTo: authRedirectUrl() } });
         if(error) return toast(error.message,'error');
         const auth_user_id = data.user?.id || null;
-        const ins = { auth_user_id, full_name: row.full_name, email: row.email.toLowerCase(), phone: row.phone||null, role: row.role, status:'active' };
+        const ins = { auth_user_id, business_id: state.staff.business_id || null, full_name: row.full_name, email: row.email.toLowerCase(), phone: row.phone||null, role: row.role, status:'active' };
         const { data: created, error: e2 } = await sb.from('pb_staff').insert(ins).select().single();
         if(e2) return toast(e2.message,'error');
         await sb.from('pb_permissions').insert({ staff_id: created.id });
