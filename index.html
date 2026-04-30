@@ -385,8 +385,13 @@ window.addEventListener('beforeunload', e => {
   if(state.session){ e.preventDefault(); e.returnValue = ''; }
 });
 
-/* ----- Keepalive ping to Supabase ----- */
-setInterval(()=>{ if(navigator.onLine) sb.from('pb_settings').select('id').limit(1).then(()=>{}); }, KEEPALIVE_MS);
+/* ----- Keepalive: proactively refresh token every 30 min ----- */
+setInterval(async ()=>{
+  if(navigator.onLine && state.session){
+    const { data, error } = await sb.auth.refreshSession();
+    if(!error && data.session) state.session = data.session;
+  }
+}, KEEPALIVE_MS);
 
 /* =====================================================================
  * STATE
@@ -532,6 +537,24 @@ async function registerBusiness({ businessName, adminName, email, password, key 
   return { ok:true, requiresEmailConfirmation: !session };
 }
 
+/* ----- Session token refresh guard ----- */
+async function ensureFreshToken(){
+  try {
+    const { data, error } = await sb.auth.refreshSession();
+    if(error || !data.session){
+      toast('Your session has expired. Please sign in again.', 'error');
+      await signOut();
+      return false;
+    }
+    state.session = data.session;
+    return true;
+  } catch(e) {
+    toast('Session refresh failed. Please sign in again.', 'error');
+    await signOut();
+    return false;
+  }
+}
+
 async function afterLogin(offline){
   await loadSettings();
   if(!offline) await smartLoadAll();
@@ -557,19 +580,40 @@ async function loadSettings(){
 }
 
 async function smartLoadAll(){
+  // Refresh the token before bulk fetching to avoid 401s on expired sessions
+  if(navigator.onLine){
+    const { data: sessionData, error: sessionErr } = await sb.auth.getSession();
+    if(sessionErr || !sessionData.session){
+      toast('Session expired. Please sign in again.', 'error');
+      await sb.auth.signOut();
+      state.session = null; state.staff = null; state.perms = null;
+      render(); return;
+    }
+    const exp = sessionData.session.expires_at;
+    if(exp && (exp - Math.floor(Date.now()/1000)) < 600){
+      const { data: refreshed, error: refreshErr } = await sb.auth.refreshSession();
+      if(!refreshErr && refreshed.session) state.session = refreshed.session;
+    }
+  }
   state.loading = true; render();
   const tables = ['pb_groups','pb_members','pb_guarantors','pb_staff','pb_inventory','pb_loans','pb_orders','pb_savings','pb_repayments','pb_meetings','pb_suppliers','pb_purchases','pb_purchase_lines','pb_reconciliations'];
   const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_staff:'staff', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations' };
   const results = await Promise.all(tables.map(t => sb.from(t).select('*').limit(5000)));
+  let jwtBroken = false;
   results.forEach((r,i) => {
     if(!r.error){
       state.data[map[tables[i]]] = r.data || [];
       lsSet(map[tables[i]], r.data || []);
     } else {
+      if(!jwtBroken && r.error.message && /jwt|unauthorized|401/i.test(r.error.message)){
+        jwtBroken = true;
+        toast('Authentication error loading data. Please sign in again.', 'error');
+        sb.auth.signOut().then(()=>{ state.session=null; state.staff=null; state.perms=null; render(); });
+      }
       state.data[map[tables[i]]] = lsGet(map[tables[i]], []);
     }
   });
-  state.loading = false;
+  if(!jwtBroken) state.loading = false;
 }
 
 /* ----- Realtime ----- */
@@ -1081,6 +1125,7 @@ function openGroupForm(g=null){
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label: g?'Save changes':'Register group', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
         const fd = new FormData($('gform'));
         const row = Object.fromEntries(fd.entries());
         row.group_number = parseInt(row.group_number);
@@ -1335,6 +1380,7 @@ function addGuarantor(){ saveWizardStep(); state._wizardData.guarantors.push({ f
 function removeGuarantor(i){ saveWizardStep(); state._wizardData.guarantors.splice(i,1); renderWizard(); }
 
 async function submitWizard(){
+  if(!(await ensureFreshToken())) return;
   const d = state._wizardData;
   const g = state.data.groups.find(x=>x.id===d.group_id);
   const officer_id = d.officer_id || g?.officer_id || null;
@@ -1385,6 +1431,7 @@ function openMemberEdit(m){
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label:'Save', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
         const fd = new FormData($('me')); const row = Object.fromEntries(fd);
         row.phone = normalisePhone(row.phone);
         const { error } = await sb.from('pb_members').update(row).eq('id', m.id);
