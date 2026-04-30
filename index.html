@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="theme-color" content="#0b1f3a" />
 <title>Prime Braidox Enterprise</title>
-<link rel="manifest" href='data:application/manifest+json;base64,ewogICJuYW1lIjogIlByaW1lIEJyYWlkb3ggRW50ZXJwcmlzZSIsCiAgInNob3J0X25hbWUiOiAiQnJhaWRveCIsCiAgInN0YXJ0X3VybCI6ICIuIiwKICAic2NvcGUiOiAiLiIsCiAgImRpc3BsYXkiOiAic3RhbmRhbG9uZSIsCiAgImJhY2tncm91bmRfY29sb3IiOiAiI2ZhZmJmZCIsCiAgInRoZW1lX2NvbG9yIjogIiMwYjFmM2EiLAogICJpY29ucyI6IFsKICAgIHsgInNyYyI6ICJkYXRhOmltYWdlL3N2Zyt4bWw7dXRmOCw8c3ZnIHhtbG5zPSdodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2Zycgdmlld0JveD0nMCAwIDUxMiA1MTInPjxyZWN0IHdpZHRoPScxMDAlJyBoZWlnaHQ9JzEwMCUnIGZpbGw9JyMwYjFmM2EnLz48dGV4dCB4PSc1MCUnIHk9JzU3JScgZm9udC1zaXplPScyMjAnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZpbGw9JyNmZmYnIGZvbnQtZmFtaWx5PSdzYW5zLXNlcmlmJyBmb250LXdlaWdodD0nNzAwJz5QQjwvdGV4dD48L3N2Zz4iLCAic2l6ZXMiOiAiNTEyeDUxMiIsICJ0eXBlIjogImltYWdlL3N2Zyt4bWwiIH0KICBdCn0=' />
+<link rel="manifest" href='data:application/manifest+json;base64,eyJuYW1lIjogIlByaW1lIEJyYWlkb3ggRW50ZXJwcmlzZSIsICJzaG9ydF9uYW1lIjogIkJyYWlkb3giLCAic3RhcnRfdXJsIjogIi4iLCAic2NvcGUiOiAiLiIsICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLCAiYmFja2dyb3VuZF9jb2xvciI6ICIjZmFmYmZkIiwgInRoZW1lX2NvbG9yIjogIiMwYjFmM2EiLCAiaWNvbnMiOiBbeyJzcmMiOiAiZGF0YTppbWFnZS9zdmcreG1sO3V0ZjgsPHN2ZyUyMHhtbG5zPSdodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyclMjB2aWV3Qm94PScwJTIwMCUyMDUxMiUyMDUxMic+PHJlY3QlMjB3aWR0aD0nMTAwJTI1JyUyMGhlaWdodD0nMTAwJTI1JyUyMGZpbGw9JyUyMzBiMWYzYScvPjx0ZXh0JTIweD0nNTAlMjUnJTIweT0nNjIlMjUnJTIwZm9udC1zaXplPScyMjAnJTIwdGV4dC1hbmNob3I9J21pZGRsZSclMjBmaWxsPSclMjNmZmYnJTIwZm9udC1mYW1pbHk9J3NhbnMtc2VyaWYnJTIwZm9udC13ZWlnaHQ9JzcwMCc+UEI8L3RleHQ+PC9zdmc+IiwgInNpemVzIjogIjUxMng1MTIiLCAidHlwZSI6ICJpbWFnZS9zdmcreG1sIiwgInB1cnBvc2UiOiAiYW55IG1hc2thYmxlIn1dfQ==' />
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='100%25' height='100%25' rx='12' fill='%230b1f3a'/><text x='50%25' y='62%25' font-size='30' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'>PB</text></svg>" />
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -276,10 +276,16 @@ const SESSION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const KEEPALIVE_MS = 30 * 60 * 1000;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+  auth: {
+    persistSession: true, autoRefreshToken: true, detectSessionInUrl: false,
+    storageKey: 'pb-main-auth'
+  }
 });
 const sbAdmin = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  auth: {
+    persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
+    storageKey: 'pb-admin-noauth', storage: { getItem:()=>null, setItem:()=>{}, removeItem:()=>{} }
+  }
 });
 
 /* ----- Storage helpers (business-scoped, quota-safe) ----- */
