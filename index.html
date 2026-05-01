@@ -266,6 +266,45 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:640px}
  * Single-file production application.
  * ===================================================================== */
 
+/* =====================================================================
+ * ⚠️  SECURITY NOTICE: ROW LEVEL SECURITY (RLS) — MANDATORY SETUP
+ * =====================================================================
+ * This frontend relies on Supabase Auth sessions to identify which
+ * business is logged in. However, the FRONTEND ALONE CANNOT ENFORCE
+ * DATA ISOLATION between businesses. Any user with the anon key could
+ * query another business's data if RLS is not enabled on the database.
+ *
+ * YOU MUST enable Row Level Security (RLS) on every table in the
+ * Supabase dashboard and create policies that match the authenticated
+ * user's business_id to the business_id column in each table.
+ *
+ * RECOMMENDED RLS POLICY PATTERN (apply to each table, e.g. pb_members):
+ *
+ *   -- Step 1: Enable RLS on the table
+ *   ALTER TABLE pb_members ENABLE ROW LEVEL SECURITY;
+ *
+ *   -- Step 2: Create a SELECT policy (repeat for INSERT, UPDATE, DELETE)
+ *   CREATE POLICY "business_isolation_select"
+ *   ON pb_members
+ *   FOR SELECT
+ *   USING (
+ *     business_id = (
+ *       SELECT business_id FROM pb_staff
+ *       WHERE auth_user_id = auth.uid()
+ *       LIMIT 1
+ *     )
+ *   );
+ *
+ *   -- Step 3: Repeat for pb_groups, pb_loans, pb_savings, pb_repayments,
+ *   --         pb_meetings, pb_inventory, pb_suppliers, pb_purchases,
+ *   --         pb_purchase_lines, pb_orders, pb_guarantors,
+ *   --         pb_reconciliations, pb_audit_log, pb_staff.
+ *
+ * Without RLS, ALL businesses can read and write ALL data.
+ * The frontend queries rely on the active session — but RLS is the
+ * only server-enforced guarantee of data isolation.
+ * ===================================================================== */
+
 const SUPABASE_URL = 'https://zkklawvlnhtaokhtjswk.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpra2xhd3Zsbmh0YW9raHRqc3drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NTY5MDAsImV4cCI6MjA5MzEzMjkwMH0.U3nXJkvl3ZMlyzWv7bEugY4Wtvt6bvYK8-mCVXRIPO4';
 /* Master key required to register a NEW business on the signup form.
@@ -621,7 +660,14 @@ async function smartLoadAll(){
       state.data[map[tables[i]]] = lsGet(map[tables[i]], []);
     }
   });
-  if(!jwtBroken) state.loading = false;
+  // Fix 1: Reconstruct purchase items from purchase lines after page reload
+  // Without this, p.items is undefined on reload (it only exists in-memory right after creation)
+  if(!jwtBroken){
+    state.data.purchases.forEach(p => {
+      p.items = state.data.purchaseLines.filter(l => l.purchase_id === p.id);
+    });
+    state.loading = false;
+  }
 }
 
 /* ----- Realtime ----- */
@@ -741,6 +787,9 @@ function renderAuth(){
         <div class="muted" style="text-align:center;margin-top:18px;font-size:11px">
           ${navigator.onLine ? 'Connected' : 'Offline mode — cached credentials accepted'}
         </div>
+        <div style="text-align:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted);letter-spacing:0.03em">
+          Powered by <strong style="color:var(--text-muted)">Rudder Research and Data Analytics LTD</strong>
+        </div>
       </div>
     </div>`;
 
@@ -843,7 +892,8 @@ function renderShell(){
           ${admin.map(i => `<a class="${state.view===i.k?'active':''}" onclick="go('${i.k}')"><span class="icn">${i.icon}</span>${i.label}</a>`).join('')}
         </nav>
         <div class="sidebar-footer">
-          v1.0 • ${navigator.onLine ? 'Online' : 'Offline'}
+          v1.0 • ${navigator.onLine ? 'Online' : 'Offline'}<br>
+          <span style="font-size:10px;opacity:0.7">Powered by Rudder Research</span>
         </div>
       </aside>
       <div class="main">
@@ -1344,7 +1394,7 @@ function pageMembers(){
             const sv = memberSavings(m.id);
             const elig = memberEligible(m.id);
             const ln = memberLoan(m.id);
-            return `<tr style="cursor:pointer" onclick="state.viewCtx={memberId:'${m.id}'};state._memberProfileTab='overview';go('memberProfile')">
+            return `<tr style="cursor:pointer" onclick="state._memberProfileTab='overview'; go('memberProfile', {memberId: '${m.id}'})">
               <td><b>${m.full_name}</b><div class="muted" style="font-size:11px">${m.phone||''}</div></td>
               <td>${m.national_id}</td>
               <td>${g?.name||'—'}</td>
@@ -1370,7 +1420,7 @@ function memberActions(ev, id){
   const m = state.data.members.find(x=>x.id===id);
   const isAdmin = state.staff.role==='admin';
   showActMenu(ev, [
-    { label:'View profile', onClick: ()=>{ state.viewCtx = { memberId:id }; go('memberProfile'); } },
+    { label:'View profile', onClick: ()=>{ go('memberProfile', { memberId: id }); } },
     { label:'Edit details', onClick: ()=>openMemberEdit(m) },
     'sep',
     ...(isAdmin ? [{ label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(`Deactivate "${m.full_name}"? They will no longer appear in active member lists.`, async()=>{
@@ -2046,6 +2096,13 @@ function showLoanSchedule(l){
 function pageCalculator(){
   $('page').innerHTML = `
     <div class="page-head"><div><h1>Loan calculator</h1><div class="desc">Compute weekly repayment schedules at the configured monthly interest rate.</div></div></div>
+    <div class="card card-pad" style="margin-bottom:14px;background:var(--surface-2);border-left:3px solid var(--primary)">
+      <h4 style="margin:0 0 8px;font-size:13px;color:var(--primary)">ℹ️ How interest methods work</h4>
+      <div style="font-size:13px;line-height:1.6;color:var(--text-muted)">
+        <b>Flat Rate:</b> Interest is calculated once on the full original loan amount for the entire duration. Every week carries the same interest charge regardless of how much has been repaid — simpler but costs more overall.<br>
+        <b>Reducing Balance:</b> Interest is calculated only on the outstanding (unpaid) balance each week. As the borrower repays, the balance shrinks and so does the interest charge — making it cheaper over time. The global <em>monthly interest rate</em> set in Settings drives both methods.
+      </div>
+    </div>
     <div class="grid-2">
       <div class="card card-pad">
         <h3 style="margin:0 0 14px">Inputs</h3>
@@ -3563,6 +3620,10 @@ function pageAccounting(){
   const totalInterestIn = repayInPeriod.reduce((a,b)=>a+Number(b.interest||0),0);
   const totalRepayIn = repayInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
 
+  // === FIX 4: Registration Fees ===
+  const membersRegisteredInPeriod = state.data.members.filter(m=>inRange(m.registered_on||''));
+  const totalRegFees = membersRegisteredInPeriod.reduce((a,m)=>a+Number(m.registration_fee||0),0);
+
   // === EXPENSES (Purchases) ===
   const purchasesInPeriod = state.data.purchases.filter(p=>inRange(p.received_on||''));
   const totalPurchasesOut = purchasesInPeriod.reduce((a,b)=>a+Number(b.total_cost||0),0);
@@ -3606,6 +3667,7 @@ function pageAccounting(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px">
       <div class="kpi k-success"><div class="l">Savings collected</div><div class="v">${KES(totalSavingsIn)}</div><div class="d">${savingsInPeriod.length} entries</div></div>
       <div class="kpi k-primary"><div class="l">Loan repayments</div><div class="v">${KES(totalRepayIn)}</div><div class="d">Interest ${KES(totalInterestIn)}</div></div>
+      <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${membersRegisteredInPeriod.length} new member${membersRegisteredInPeriod.length!==1?'s':''}</div></div>
       <div class="kpi k-warn"><div class="l">Loans issued (cash out)</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
     </div>
@@ -3617,11 +3679,12 @@ function pageAccounting(){
           <tr><td style="padding:6px 0;color:var(--text-muted)">Savings received</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalSavingsIn)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loan repayments (principal)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalPrincipalIn)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Interest income</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalInterestIn)}</td></tr>
-          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Registration fees (${membersRegisteredInPeriod.length} members)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalRegFees)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn+totalRegFees)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalPurchasesOut)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalLoansOut)}</td></tr>
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">−${KES(totalPurchasesOut+totalLoansOut)}</td></tr>
-          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)}</td></tr>
+          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees-totalPurchasesOut-totalLoansOut)}</td></tr>
         </table>
       </div>
       <div class="card card-pad">
