@@ -806,7 +806,7 @@ function navItems(){
     { k:'meeting', label:'Meeting Recorder', show:isAdmin || p.can_record_savings || p.can_record_repayments, icon:meetingIcon() },
     { k:'loans', label:'Active Loans', show:true, icon:loanIcon() },
     { k:'calculator', label:'Loan Calculator', show:true, icon:calcIcon() },
-    { k:'inventory', label:'Inventory', show:isAdmin || p.can_manage_inventory, icon:invIcon() },
+    { k:'inventory', label:'Inventory', show:true, icon:invIcon() },
     { k:'suppliers', label:'Suppliers', show:isAdmin || p.can_manage_suppliers, icon:supplierIcon() },
     { k:'purchases', label:'Purchases', show:isAdmin || p.can_manage_suppliers, icon:purchaseIcon() },
     { k:'orders', label:'Orders', show:isAdmin || p.can_submit_orders || p.can_approve_orders, icon:orderIcon() },
@@ -1061,7 +1061,7 @@ function pageDashboard(){
       <div class="kpi k-primary"><div class="l">Groups</div><div class="v">${state.data.groups.length}</div><div class="d">${state.data.groups.filter(g=>g.status==='active').length} active</div></div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:4px">
+    <div style="display:flex;flex-direction:column;gap:16px;margin-top:4px">
       <div class="card" style="min-width:0">
         <div class="card-head"><h3>Recent savings</h3><div class="sub">${savings.length} entries</div></div>
         <div style="overflow-x:auto">
@@ -1081,9 +1081,9 @@ function pageDashboard(){
         <div class="card-head"><h3>Active loans</h3><div class="sub">${activeLoans.length} loans</div></div>
         <div style="overflow-x:auto">
           <table class="tbl">
-            <thead><tr><th>Member</th><th>Asset</th><th class="num">Outstanding</th><th>Status</th></tr></thead>
+            <thead><tr><th>Member</th><th>Asset</th><th class="num">Loan value</th><th class="num">Outstanding</th><th class="num">Weekly</th><th>Track</th></tr></thead>
             <tbody>
-              ${activeLoans.slice(0,8).map(l => {
+              ${activeLoans.slice(0,10).map(l => {
                 const m = state.data.members.find(x=>x.id===l.member_id);
                 const out = Number(l.total_payable||0)-loanPaid(l.id);
                 const weeksElapsed = Math.max(0,Math.floor((Date.now()-new Date(l.start_date).getTime())/(7*86400000)));
@@ -1091,8 +1091,15 @@ function pageDashboard(){
                 const paid = loanPaid(l.id);
                 const behind = Math.max(0,Math.ceil((expected-paid)/Number(l.weekly_installment||1)));
                 const cls = behind>=2?'b-red':behind===1?'b-yellow':'b-green';
-                return `<tr><td>${m?.full_name||'—'}</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.asset_name}</td><td class="num">${KES(out)}</td><td><span class="badge ${cls}">${behind>0?behind+'w behind':'On track'}</span></td></tr>`;
-              }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
+                return `<tr>
+                  <td>${m?.full_name||'—'}</td>
+                  <td>${l.asset_name}</td>
+                  <td class="num">${KES(l.loan_value)}</td>
+                  <td class="num">${KES(out)}</td>
+                  <td class="num">${KES(l.weekly_installment)}</td>
+                  <td><span class="badge ${cls}">${behind>0?behind+'w behind':'On track'}</span></td>
+                </tr>`;
+              }).join('') || `<tr><td colspan="6"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -2132,6 +2139,7 @@ function computeSchedule(principal, weekly, method, startDate){
  * ===================================================================== */
 function pageInventory(){
   const inv = state.data.inventory;
+  const isAdmin = state.staff.role === 'admin';
   const q = (state._invSearch||'').toLowerCase();
   const filtered = q ? inv.filter(a=>a.name.toLowerCase().includes(q)||(a.category||'').toLowerCase().includes(q)) : inv;
   const PAGE_SIZE = 20;
@@ -2141,13 +2149,15 @@ function pageInventory(){
 
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Inventory</h1><div class="desc">Assets available for loan issuance.</div></div>
+      <div><h1>Inventory</h1><div class="desc">${isAdmin?'Assets available for loan issuance.':'Check asset availability before placing orders.'}</div></div>
       <div class="actions">
+        ${isAdmin?`
         <button class="btn btn-outline" onclick="downloadInventoryTemplate()">⬇ Download template</button>
         <button class="btn btn-outline" onclick="$('inv-import').click()">⬆ Import from Excel</button>
         <input type="file" id="inv-import" accept=".xlsx,.xls,.csv" style="display:none" onchange="importInventory(this)" />
         <button class="btn btn-outline" onclick="exportInventory()">Export</button>
         <button class="btn btn-primary" onclick="openAssetForm()">Add asset</button>
+        `:''}
       </div>
     </div>
     <div class="toolbar">
@@ -2178,7 +2188,7 @@ function pageInventory(){
               <td class="num"><b>${KES(totalLoan)}</b></td>
               <td class="num">${margin.toFixed(1)}%</td>
               <td>${status}</td>
-              <td><button class="act-btn" onclick="invActions(event,'${a.id}')">···</button></td>
+              ${isAdmin?`<td><button class="act-btn" onclick="invActions(event,'${a.id}')">···</button></td>`:'<td></td>'}
             </tr>`;
           }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No inventory yet</h4><p>Add assets manually or import from Excel.</p></div></td></tr>`}
         </tbody>
@@ -3180,45 +3190,51 @@ async function submitPurchase(){
   }
   // Attach items for local display
   created.items = validLines;
+
+  // Process each line item sequentially to ensure all hit inventory
+  let invUpdated = 0;
   for(const l of validLines){
     const costPerUnit = Number(l.cost_per_unit)||0;
     const qty = Number(l.quantity)||0;
+    if(!qty) continue;
+
     if(l.isNew || !l.asset_id){
-      // New item: create inventory record
+      // Brand new asset — create inventory record
       const newRow = {
-        name: l.asset_name, category: 'Other', stock: qty,
+        name: l.asset_name, category:'Other', stock: qty,
         buying_price: costPerUnit,
-        loan_price: Math.round(costPerUnit * 1.15 * 100) / 100, // default 15% margin
+        loan_price: Math.round(costPerUnit*1.15*100)/100,
         reorder_level: 5
       };
       const { data: newAsset, error: ae } = await sb.from('pb_inventory').insert(newRow).select().single();
-      if(!ae && newAsset){
-        state.data.inventory.unshift(newAsset);
-        toast(`New inventory item "${l.asset_name}" added.`, 'info');
-      }
+      if(ae){ toast(`Failed to add "${l.asset_name}" to inventory: ${ae.message}`,'warn'); continue; }
+      state.data.inventory.unshift(newAsset);
+      invUpdated++;
     } else {
+      // Existing asset — find by id in local state (re-lookup each iteration so previous loops are reflected)
       const a = state.data.inventory.find(x=>x.id===l.asset_id);
-      if(!a) continue;
+      if(!a){ toast(`Asset "${l.asset_name}" not found in local inventory, skipping.`,'warn'); continue; }
       const prevStock = Number(a.stock||0);
       const newStock = prevStock + qty;
-      // Weighted average cost for buying_price
       const prevCost = Number(a.buying_price||0);
-      const weightedCost = prevStock > 0
-        ? Math.round(((prevCost * prevStock) + (costPerUnit * qty)) / newStock * 100) / 100
+      const weightedCost = prevStock>0
+        ? Math.round(((prevCost*prevStock)+(costPerUnit*qty))/newStock*100)/100
         : costPerUnit;
-      // Scale loan_price proportionally if buying_price changed
       const prevLoanPrice = Number(a.loan_price||0);
-      const margin = prevCost > 0 ? prevLoanPrice / prevCost : 1.15;
-      const newLoanPrice = Math.round(weightedCost * margin * 100) / 100;
-      await sb.from('pb_inventory').update({
-        stock: newStock, buying_price: weightedCost, loan_price: newLoanPrice
-      }).eq('id', a.id);
+      const margin = prevCost>0 ? prevLoanPrice/prevCost : 1.15;
+      const newLoanPrice = Math.round(weightedCost*margin*100)/100;
+      const { error: ue } = await sb.from('pb_inventory').update({
+        stock:newStock, buying_price:weightedCost, loan_price:newLoanPrice
+      }).eq('id',a.id);
+      if(ue){ toast(`Failed to update stock for "${l.asset_name}": ${ue.message}`,'warn'); continue; }
+      // Update local state immediately so next iteration sees correct stock
       a.stock = newStock; a.buying_price = weightedCost; a.loan_price = newLoanPrice;
+      invUpdated++;
     }
   }
   state.data.purchases.unshift(created);
   audit('purchase_create','pb_purchases',created.id, null, { total, lines: validLines.length });
-  closeModal(); render(); toast('Stock received and inventory updated','success');
+  closeModal(); render(); toast(`Stock received — ${invUpdated} of ${validLines.length} asset(s) updated in inventory.`,'success');
 }
 
 
@@ -3383,10 +3399,6 @@ function openReconForm(){
           <input type="number" name="actual_sms_amount" id="rec-actual" min="0" step="0.01" placeholder="Enter the amount from the chairman's SMS" />
           <div class="helper" style="color:var(--warning)">This discrepancy will be flagged for the admin to investigate.</div>
         </div>
-
-        <div class="field"><label>Notes (optional)</label>
-          <textarea name="notes" rows="2" placeholder="Any extra context for the admin..."></textarea>
-        </div>
       </form>
     `,
     actions:[
@@ -3404,6 +3416,8 @@ function openReconForm(){
         row.logged_by = state.staff.id;
         if(row.actual_sms_amount) row.actual_sms_amount = Number(row.actual_sms_amount)||0;
         else delete row.actual_sms_amount;
+        // Remove fields that may not exist in the schema yet
+        delete row.notes;
         const { data, error } = await sb.from('pb_reconciliations').insert(row).select().single();
         if(error) return toast(error.message,'error');
         state.data.reconciliations.unshift(data);
@@ -3591,33 +3605,30 @@ function pageAccounting(){
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
       <div class="card card-pad">
         <h3 style="margin:0 0 14px">Period Income Statement</h3>
-        <table class="summary-table" style="width:100%">
-          <tr><td>Savings received</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalSavingsIn)}</td></tr>
-          <tr><td>Loan repayments (principal)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalPrincipalIn)}</td></tr>
-          <tr><td>Interest income</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalInterestIn)}</td></tr>
-          <tr><td style="border-top:1px solid var(--border);padding-top:8px">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:1px solid var(--border);padding-top:8px">${KES(totalSavingsIn+totalRepayIn)}</td></tr>
-          <tr style="height:12px"><td></td><td></td></tr>
-          <tr><td>Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">- ${KES(totalPurchasesOut)}</td></tr>
-          <tr><td>Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">- ${KES(totalLoansOut)}</td></tr>
-          <tr><td style="border-top:1px solid var(--border);padding-top:8px">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:1px solid var(--border);padding-top:8px">- ${KES(totalPurchasesOut+totalLoansOut)}</td></tr>
-          <tr style="height:12px"><td></td><td></td></tr>
-          <tr><td style="font-weight:700;font-size:14px">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:15px;color:${(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)}</td></tr>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Savings received</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalSavingsIn)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Loan repayments (principal)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalPrincipalIn)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Interest income</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalInterestIn)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalPurchasesOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalLoansOut)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">−${KES(totalPurchasesOut+totalLoansOut)}</td></tr>
+          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)}</td></tr>
         </table>
       </div>
       <div class="card card-pad">
         <h3 style="margin:0 0 14px">Balance Sheet Snapshot (All-time)</h3>
-        <table class="summary-table" style="width:100%">
-          <tr><td>Total member savings (liability)</td><td style="text-align:right;font-weight:600">${KES(totalSavingsBalance)}</td></tr>
-          <tr><td>Loans outstanding (asset)</td><td style="text-align:right;font-weight:600">${KES(totalOutstanding)}</td></tr>
-          <tr><td>Inventory at loan price (asset)</td><td style="text-align:right;font-weight:600">${KES(inventoryValue)}</td></tr>
-          <tr><td>Inventory at cost (asset)</td><td style="text-align:right;font-weight:600">${KES(inventoryCost)}</td></tr>
-          <tr><td style="border-top:1px solid var(--border);padding-top:8px">Inventory margin</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:1px solid var(--border);padding-top:8px">${KES(inventoryValue-inventoryCost)}</td></tr>
-          <tr style="height:12px"><td></td><td></td></tr>
-          <tr><td>Paybill confirmed (period)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(reconConfirmed)}</td></tr>
-          <tr><td>Paybill pending confirmation</td><td style="text-align:right;font-weight:600;color:var(--warning)">${KES(reconPending)}</td></tr>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Total member savings (liability)</td><td style="text-align:right;font-weight:600;min-width:100px">${KES(totalSavingsBalance)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Loans outstanding (asset)</td><td style="text-align:right;font-weight:600">${KES(totalOutstanding)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Inventory at loan price</td><td style="text-align:right;font-weight:600">${KES(inventoryValue)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Inventory at cost</td><td style="text-align:right;font-weight:600">${KES(inventoryCost)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Inventory margin</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(inventoryValue-inventoryCost)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Paybill confirmed (period)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(reconConfirmed)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Paybill pending confirmation</td><td style="text-align:right;font-weight:600;color:var(--warning)">${KES(reconPending)}</td></tr>
         </table>
       </div>
     </div>
