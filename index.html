@@ -801,7 +801,7 @@ function navItems(){
   const p = state.perms || {};
   const items = [
     { k:'dashboard', label:'Dashboard', show:true, icon:dashIcon() },
-    { k:'groups', label:'Groups', show:isAdmin, icon:groupsIcon() },
+    { k:'groups', label:'Groups', show:true, icon:groupsIcon() },
     { k:'members', label:'Members', show:true, icon:memberIcon() },
     { k:'meeting', label:'Meeting Recorder', show:isAdmin || p.can_record_savings || p.can_record_repayments, icon:meetingIcon() },
     { k:'loans', label:'Active Loans', show:true, icon:loanIcon() },
@@ -811,6 +811,7 @@ function navItems(){
     { k:'purchases', label:'Purchases', show:isAdmin || p.can_manage_suppliers, icon:purchaseIcon() },
     { k:'orders', label:'Orders', show:isAdmin || p.can_submit_orders || p.can_approve_orders, icon:orderIcon() },
     { k:'reconciliation', label:'Paybill Reconciliation', show:isAdmin, icon:recIcon() },
+    { k:'accounting', label:'Accounting', show:isAdmin, icon:accountingIcon() },
     { k:'reports', label:'Reports', show:isAdmin || p.can_view_reports, icon:reportIcon() },
   ];
   const adminItems = [
@@ -880,7 +881,7 @@ function pageTitle(){
     dashboard:'Dashboard', groups:'Groups', members:'Members', meeting:'Meeting Recorder',
     loans:'Active Loans', calculator:'Loan Calculator', inventory:'Inventory',
     suppliers:'Suppliers', purchases:'Purchases', orders:'Orders',
-    reconciliation:'Paybill Reconciliation', reports:'Reports',
+    reconciliation:'Paybill Reconciliation', reports:'Reports', accounting:'Accounting',
     staff:'Staff & Permissions', settings:'Settings', audit:'Audit Log',
     memberProfile:'Member Profile'
   })[state.view] || '—';
@@ -898,7 +899,7 @@ function renderPage(){
     dashboard: pageDashboard, groups: pageGroups, members: pageMembers,
     meeting: pageMeeting, loans: pageLoans, calculator: pageCalculator,
     inventory: pageInventory, suppliers: pageSuppliers, purchases: pagePurchases,
-    orders: pageOrders, reconciliation: pageReconciliation, reports: pageReports,
+    orders: pageOrders, reconciliation: pageReconciliation, reports: pageReports, accounting: pageAccounting,
     staff: pageStaff, settings: pageSettings, audit: pageAudit,
     memberProfile: pageMemberProfile
   };
@@ -923,6 +924,7 @@ function auditIcon(){ return ic('<polyline points="22 12 18 12 15 21 9 3 6 12 2 
 function supplierIcon(){ return ic('<path d="M16 3h5v5"/><path d="M21 3l-7 7"/><path d="M8 21H3v-5"/><path d="M3 21l7-7"/><circle cx="12" cy="12" r="3"/>'); }
 function purchaseIcon(){ return ic('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>'); }
 function recIcon(){ return ic('<path d="M3 12h4l3-9 4 18 3-9h4"/>'); }
+function accountingIcon(){ return ic('<path d="M2 20h20M5 20V8l7-6 7 6v12"/><path d="M9 20v-5h6v5"/><path d="M9 11h6"/>'); }
 function themeIcon(){ return ic('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'); }
 function switchIcon(){ return ic('<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'); }
 
@@ -1167,12 +1169,19 @@ function pageOfficerDashboard(){
  * PAGE: GROUPS
  * ===================================================================== */
 function pageGroups(){
-  const groups = state.data.groups;
+  const isAdmin = state.staff.role === 'admin';
+  // Officers only see their own groups
+  const groups = isAdmin ? state.data.groups : state.data.groups.filter(g=>g.officer_id===state.staff.id);
+  const PAGE_SIZE = 10;
+  const _gPage = state._groupsPage || 0;
+  const total = groups.length;
+  const paged = groups.slice(_gPage * PAGE_SIZE, (_gPage+1)*PAGE_SIZE);
+
   $('page').innerHTML = `
     <div class="page-head">
       <div>
         <h1>Groups</h1>
-        <div class="desc">Chama groups and their assigned loan officers.</div>
+        <div class="desc">${isAdmin ? 'All chama groups.' : 'Groups assigned to you.'}</div>
       </div>
       <div class="actions">
         <button class="btn btn-primary" onclick="openGroupForm()">Register group</button>
@@ -1186,15 +1195,15 @@ function pageGroups(){
           <th>Status</th><th></th>
         </tr></thead>
         <tbody>
-          ${groups.map(g => {
+          ${paged.map(g => {
             const mc = state.data.members.filter(m=>m.group_id===g.id).length;
             const off = state.data.staff.find(s=>s.id===g.officer_id);
             return `<tr>
               <td>${g.group_number}</td>
               <td><b>${g.name}</b></td>
-              <td>${g.meeting_day || '—'} ${g.meeting_time? '· '+g.meeting_time:''}</td>
-              <td>${g.chairman_name || '—'}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
-              <td>${off?.full_name || '—'}</td>
+              <td>${g.meeting_day||'—'} ${g.meeting_time?'· '+g.meeting_time:''}</td>
+              <td>${g.chairman_name||'—'}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
+              <td>${off?.full_name||'—'}</td>
               <td class="num">${mc}</td>
               <td class="num">${KES(groupSavingsTotal(g.id))}</td>
               <td><span class="badge ${g.status==='active'?'b-green':'b-grey'}">${g.status}</span></td>
@@ -1203,7 +1212,13 @@ function pageGroups(){
           }).join('') || `<tr><td colspan="9"><div class="empty"><h4>No groups registered</h4><p>Create your first chama group to start onboarding members.</p></div></td></tr>`}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${total > PAGE_SIZE ? `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--text-muted)">
+      <button class="btn btn-sm btn-outline" ${_gPage===0?'disabled':''} onclick="state._groupsPage=${_gPage-1};pageGroups()">← Prev</button>
+      <span>Page ${_gPage+1} of ${Math.ceil(total/PAGE_SIZE)} &nbsp;(${total} groups)</span>
+      <button class="btn btn-sm btn-outline" ${(_gPage+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._groupsPage=${_gPage+1};pageGroups()">Next →</button>
+    </div>` : ''}
+  `;
 }
 function groupActions(ev, id){
   const g = state.data.groups.find(x=>x.id===id);
@@ -1281,29 +1296,33 @@ function openGroupForm(g=null){
 function pageMembers(){
   const ctx = state.viewCtx || {};
   const filterGroup = ctx.groupId || '';
-  let list = state.data.members;
+  const isAdmin = state.staff.role === 'admin';
+  let list = isAdmin ? state.data.members : state.data.members.filter(m=>{
+    const g = state.data.groups.find(x=>x.id===m.group_id);
+    return g?.officer_id === state.staff.id;
+  });
   if(filterGroup) list = list.filter(m=>m.group_id===filterGroup);
   const q = (state._memberSearch||'').toLowerCase();
   if(q) list = list.filter(m => (m.full_name||'').toLowerCase().includes(q) || (m.national_id||'').includes(q) || (m.phone||'').includes(q));
 
+  const PAGE_SIZE = 15;
+  const _page = state._membersPage || 0;
+  const total = list.length;
+  const paged = list.slice(_page*PAGE_SIZE, (_page+1)*PAGE_SIZE);
+
   $('page').innerHTML = `
     <div class="page-head">
-      <div>
-        <h1>Members</h1>
-        <div class="desc">Registered members across all groups.</div>
-      </div>
-      <div class="actions">
-        <button class="btn btn-primary" onclick="openMemberWizard()">Register member</button>
-      </div>
+      <div><h1>Members</h1><div class="desc">Registered members${isAdmin?'':' in your groups'}.</div></div>
+      <div class="actions"><button class="btn btn-primary" onclick="openMemberWizard()">Register member</button></div>
     </div>
     <div class="toolbar">
       <div class="search-box grow">
         <span class="ic">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
-        <input id="mem-search" placeholder="Search by name, ID number or phone" value="${state._memberSearch||''}"/>
+        <input id="mem-search" placeholder="Search by name, ID or phone" value="${state._memberSearch||''}"/>
       </div>
       <select id="mem-group" style="max-width:240px">
         <option value="">All groups</option>
-        ${state.data.groups.map(g=>`<option value="${g.id}" ${filterGroup===g.id?'selected':''}>${g.name}</option>`).join('')}
+        ${state.data.groups.filter(g=>isAdmin||g.officer_id===state.staff.id).map(g=>`<option value="${g.id}" ${filterGroup===g.id?'selected':''}>${g.name}</option>`).join('')}
       </select>
     </div>
     <div class="table-wrap">
@@ -1313,7 +1332,7 @@ function pageMembers(){
           <th>Eligibility</th><th>Loan</th><th></th>
         </tr></thead>
         <tbody>
-          ${list.map(m => {
+          ${paged.map(m => {
             const g = state.data.groups.find(x=>x.id===m.group_id);
             const sv = memberSavings(m.id);
             const elig = memberEligible(m.id);
@@ -1323,16 +1342,22 @@ function pageMembers(){
               <td>${m.national_id}</td>
               <td>${g?.name||'—'}</td>
               <td class="num">${KES(sv)}</td>
-              <td>${elig ? `<span class="badge b-green">Eligible</span>` : `<span class="badge b-grey">Not yet</span>`}</td>
-              <td>${ln ? `<span class="badge b-blue">Active</span>` : `<span class="badge b-grey">None</span>`}</td>
+              <td>${elig?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Not yet</span>'}</td>
+              <td>${ln?'<span class="badge b-blue">Active</span>':'<span class="badge b-grey">None</span>'}</td>
               <td><button class="act-btn" onclick="memberActions(event,'${m.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="7"><div class="empty"><h4>No members found</h4><p>Begin by registering a member to one of your active groups.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="7"><div class="empty"><h4>No members found</h4><p>Register a member to one of your active groups.</p></div></td></tr>`}
         </tbody>
       </table>
-    </div>`;
-  $('mem-search').addEventListener('input', e => { state._memberSearch = e.target.value; pageMembers(); });
-  $('mem-group').addEventListener('change', e => { state.viewCtx = { groupId: e.target.value }; pageMembers(); });
+    </div>
+    ${total > PAGE_SIZE ? `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--text-muted)">
+      <button class="btn btn-sm btn-outline" ${_page===0?'disabled':''} onclick="state._membersPage=${_page-1};pageMembers()">← Prev</button>
+      <span>Page ${_page+1} of ${Math.ceil(total/PAGE_SIZE)} &nbsp;(${total} members)</span>
+      <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._membersPage=${_page+1};pageMembers()">Next →</button>
+    </div>` : ''}
+  `;
+  $('mem-search').addEventListener('input', e => { state._memberSearch = e.target.value; state._membersPage=0; pageMembers(); });
+  $('mem-group').addEventListener('change', e => { state.viewCtx = { groupId: e.target.value }; state._membersPage=0; pageMembers(); });
 }
 function memberActions(ev, id){
   const m = state.data.members.find(x=>x.id===id);
@@ -1935,16 +1960,15 @@ function runCalc(){
 function computeSchedule(principal, weekly, method, startDate){
   const monthlyRate = Number(state.settings?.monthly_interest_rate || 0.025);
   const weeklyRate = monthlyRate * 12 / 52;
-  const max = state.settings?.max_loan_weeks || 52;
+  const HARD_CAP = 520; // 10 years absolute max to prevent infinite loop
   const rows = [];
   if(method === 'flat'){
-    // Estimate weeks from desired weekly. Iterate weeks 1..max+10 to find feasible.
     let weeks = Math.max(1, Math.ceil(principal / Math.max(1, weekly - principal*weeklyRate)));
-    if(!isFinite(weeks) || weeks<1) weeks = max;
+    if(!isFinite(weeks) || weeks<1 || weeks>HARD_CAP) weeks = HARD_CAP;
     let totalInterest = principal * weeklyRate * weeks;
     let totalPayable = principal + totalInterest;
     let inst = weekly > 0 ? weekly : totalPayable / weeks;
-    weeks = Math.ceil(totalPayable / inst);
+    weeks = Math.min(HARD_CAP, Math.ceil(totalPayable / inst));
     totalInterest = principal * weeklyRate * weeks;
     totalPayable = principal + totalInterest;
     inst = totalPayable / weeks;
@@ -1956,15 +1980,14 @@ function computeSchedule(principal, weekly, method, startDate){
       const due = new Date(startDate); due.setDate(due.getDate() + 7*w);
       rows.push({ w, due, principal:principalPerWk, interest:interestPerWk, installment:inst, balance:Math.max(0,bal) });
     }
-    const suggestedWeekly = totalPayable / Math.min(max, weeks);
-    return { weeks, totalInterest, totalPayable, suggestedWeekly, rows };
+    return { weeks, totalInterest, totalPayable, suggestedWeekly: totalPayable/weeks, rows };
   } else {
-    // reducing
-    let bal = principal; let w = 0; let totalInterest = 0; const cap = max + 20;
-    while(bal > 0.01 && w < cap){
+    let bal = principal; let w = 0; let totalInterest = 0;
+    while(bal > 0.01 && w < HARD_CAP){
       w++;
       const interest = bal * weeklyRate;
       const principalPart = Math.min(bal, Math.max(0, weekly - interest));
+      if(principalPart <= 0){ w = HARD_CAP; break; } // weekly too low to cover interest
       const installment = principalPart + interest;
       bal -= principalPart;
       totalInterest += interest;
@@ -1972,7 +1995,7 @@ function computeSchedule(principal, weekly, method, startDate){
       rows.push({ w, due, principal:principalPart, interest, installment, balance:Math.max(0,bal) });
     }
     const totalPayable = principal + totalInterest;
-    return { weeks: w, totalInterest, totalPayable, suggestedWeekly: totalPayable/Math.min(max,w||1), rows };
+    return { weeks: w, totalInterest, totalPayable, suggestedWeekly: totalPayable/Math.max(1,w), rows };
   }
 }
 
@@ -2042,15 +2065,23 @@ function openAssetForm(a=null){
         <div class="field"><label>Category</label>
           <select name="category">${['Kitchen','Bedding','Electronics','Furniture','Other'].map(c=>`<option ${a?.category===c?'selected':''}>${c}</option>`).join('')}</select>
         </div>
-        <div class="field"><label>Stock</label><input type="number" min="0" name="stock" value="${a?.stock||0}" /></div>
-        <div class="field"><label>Buying price (KES)</label><input type="number" min="0" step="0.01" name="buying_price" value="${a?.buying_price||0}" /></div>
-        <div class="field"><label>Loan price (KES)</label><input type="number" min="0" step="0.01" name="loan_price" value="${a?.loan_price||0}" /></div>
+        <div class="field"><label>Quantity in stock</label><input type="number" min="0" name="stock" id="af-stock" value="${a?.stock||0}" oninput="assetCalcTotals()" /></div>
+        <div class="field"><label>Buying price per unit (KES)</label><input type="number" min="0" step="0.01" name="buying_price" id="af-buying" value="${a?.buying_price||0}" oninput="assetCalcTotals()" /></div>
+        <div class="field"><label>Loan price per unit (KES)</label><input type="number" min="0" step="0.01" name="loan_price" id="af-loan" value="${a?.loan_price||0}" oninput="assetCalcTotals()" /></div>
         <div class="field"><label>Reorder level</label><input type="number" min="0" name="reorder_level" value="${a?.reorder_level||5}" /></div>
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-top:2px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">Total inventory value (qty × price)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div><div style="font-size:11px;color:var(--text-muted)">At cost</div><div style="font-weight:700;font-size:15px" id="af-totalcost">${KES((a?.stock||0)*(a?.buying_price||0))}</div></div>
+          <div><div style="font-size:11px;color:var(--text-muted)">At loan price</div><div style="font-weight:700;font-size:15px;color:var(--accent)" id="af-totalloan">${KES((a?.stock||0)*(a?.loan_price||0))}</div></div>
+        </div>
       </div>
     </form>`,
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label:'Save', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
         const fd = new FormData($('af')); const row = Object.fromEntries(fd);
         ['stock','buying_price','loan_price','reorder_level'].forEach(k=>row[k]=Number(row[k])||0);
         if(a){
@@ -2066,6 +2097,13 @@ function openAssetForm(a=null){
       }}
     ]
   });
+}
+function assetCalcTotals(){
+  const qty = Number(document.getElementById('af-stock')?.value||0);
+  const buy = Number(document.getElementById('af-buying')?.value||0);
+  const loan = Number(document.getElementById('af-loan')?.value||0);
+  const tc = document.getElementById('af-totalcost'); if(tc) tc.textContent = KES(qty*buy);
+  const tl = document.getElementById('af-totalloan'); if(tl) tl.textContent = KES(qty*loan);
 }
 function quickRestock(a){
   modal({
@@ -2272,12 +2310,8 @@ function approveOrder(o){
         const weekly = Number($('wi').value)||0;
         const start = new Date($('sd').value);
         const principal = asset.loan_price * o.quantity;
-        const r = computeSchedule(principal, weekly, 'flat', start);
-        const max = state.settings?.max_loan_weeks||52;
         if(weekly <= 0) return toast('Weekly installment must be greater than zero.','error');
-        if(r.weeks > max){
-          toast(`Warning: schedule is ${r.weeks} weeks, which exceeds the configured maximum of ${max} weeks. Issuing anyway.`, 'warn');
-        }
+        const r = computeSchedule(principal, weekly, 'flat', start);
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
         const loan = {
           member_id: member.id, group_id: member.group_id, officer_id: state.staff.id,
@@ -2872,23 +2906,26 @@ async function submitPurchase(){
   const total = override > 0 ? override : auto;
   const sup = state.data.suppliers.find(x=>x.id===row.supplier_id);
   const purchase = {
-    supplier_id: row.supplier_id, supplier_name: sup?.name,
+    supplier_id: row.supplier_id, supplier_name: sup?.name||'',
     invoice_no: row.invoice_no||null, received_on: row.received_on,
     total_cost: total, notes: row.notes||null,
-    received_by: state.staff.id, received_by_name: state.staff.full_name,
-    items: validLines
+    received_by: state.staff.id, received_by_name: state.staff.full_name
+    // items column removed — stored in pb_purchase_lines instead
   };
   const { data: created, error } = await sb.from('pb_purchases').insert(purchase).select().single();
-  if(error) return toast(error.message,'error');
+  if(error) return toast('Save failed: '+error.message+' — check pb_purchases table columns.','error');
   if(validLines.length){
     const lineRows = validLines.map(l => ({
       purchase_id: created.id, asset_id: l.asset_id||null, asset_name: l.asset_name,
-      quantity: Number(l.quantity), cost_per_unit: Number(l.cost_per_unit),
-      subtotal: Number(l.subtotal)||Number(l.quantity)*Number(l.cost_per_unit),
+      quantity: Number(l.quantity), cost_per_unit: Number(l.cost_per_unit)||0,
+      subtotal: Number(l.subtotal)||Number(l.quantity)*Number(l.cost_per_unit||0),
       batch_no: l.batch_no||null
     }));
-    await sb.from('pb_purchase_lines').insert(lineRows);
+    const { error: le } = await sb.from('pb_purchase_lines').insert(lineRows);
+    if(le) toast('Line items warning: '+le.message,'warn');
   }
+  // Attach items for local display
+  created.items = validLines;
   for(const l of validLines){
     const costPerUnit = Number(l.cost_per_unit)||0;
     const qty = Number(l.quantity)||0;
@@ -2935,11 +2972,25 @@ async function submitPurchase(){
  * ===================================================================== */
 function pageReconciliation(){
   const list = (state.data.reconciliations||[]).slice().sort((a,b)=> new Date(b.meeting_date)-new Date(a.meeting_date));
+  const pending = list.filter(r=>r.status==='pending');
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Paybill reconciliation</h1><div class="desc">Track chairman remittances of weekly collections to the M-Pesa Paybill.</div></div>
+      <div><h1>Paybill reconciliation</h1><div class="desc">Match weekly M-Pesa remittances from group chairmen to meeting collection records.</div></div>
       <div class="actions"><button class="btn btn-primary" onclick="openReconForm()">Record remittance</button></div>
     </div>
+
+    <div class="card card-pad" style="margin-bottom:16px;background:var(--info-50);border-color:var(--info)">
+      <div style="font-weight:700;color:var(--info);margin-bottom:6px">How paybill reconciliation works</div>
+      <div style="font-size:13px;color:var(--text);line-height:1.7">
+        <b>1. After each meeting</b>, the group chairman collects cash savings and loan repayments from members.<br>
+        <b>2. The chairman remits this money</b> to the business M-Pesa Paybill. They receive an <b>M-Pesa confirmation SMS</b> — e.g. <em>"QHJ4KL2MPX confirmed. You have sent KES 4,500 to Paybill..."</em><br>
+        <b>3. The chairman shares the M-Pesa code</b> (e.g. <code style="background:var(--surface);padding:1px 6px;border-radius:4px;font-family:monospace">QHJ4KL2MPX</code>) with the loan officer or admin.<br>
+        <b>4. The loan officer/admin records the remittance here</b>, pasting that code as the M-Pesa Reference. The system auto-fills savings & repayment totals from meeting records.<br>
+        <b>5. An admin confirms</b> the remittance once the Paybill statement is checked to match.
+      </div>
+      ${pending.length ? `<div style="margin-top:10px;font-weight:600;color:var(--warning)">${pending.length} remittance${pending.length>1?'s':''} pending confirmation.</div>` : ''}
+    </div>
+
     <div class="table-wrap"><table class="tbl">
       <thead><tr><th>Meeting date</th><th>Group</th><th class="num">Savings</th><th class="num">Repayments</th><th class="num">Grand total</th><th>M-Pesa ref</th><th>Status</th><th></th></tr></thead>
       <tbody>${list.map(r => {
@@ -2950,7 +3001,7 @@ function pageReconciliation(){
           <td class="num">${KES(r.total_savings)}</td>
           <td class="num">${KES(r.total_repayments)}</td>
           <td class="num"><b>${KES(r.grand_total)}</b></td>
-          <td>${r.mpesa_reference||'—'}</td>
+          <td><code style="font-family:monospace;font-size:12px;background:var(--surface-2);padding:2px 6px;border-radius:4px">${r.mpesa_reference||'—'}</code></td>
           <td><span class="badge ${r.status==='confirmed'?'b-green':'b-yellow'}">${r.status}</span></td>
           <td><button class="act-btn" onclick="reconActions(event,'${r.id}')">···</button></td>
         </tr>`;
@@ -3043,8 +3094,143 @@ function reconAutoTotals(groupId){
 }
 
 /* =====================================================================
- * BOOT
+ * PAGE: ACCOUNTING
  * ===================================================================== */
+function pageAccounting(){
+  const { start, end } = dashDateRange();
+  const inRange = date => date >= start && date <= end;
+  const filterBtns = [['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']];
+
+  // === INCOME ===
+  const savingsInPeriod = state.data.savings.filter(s=>inRange(s.meeting_date||''));
+  const totalSavingsIn = savingsInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
+  const repayInPeriod = state.data.repayments.filter(r=>inRange(r.meeting_date||''));
+  const totalPrincipalIn = repayInPeriod.reduce((a,b)=>a+Number(b.principal||0),0);
+  const totalInterestIn = repayInPeriod.reduce((a,b)=>a+Number(b.interest||0),0);
+  const totalRepayIn = repayInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
+
+  // === EXPENSES (Purchases) ===
+  const purchasesInPeriod = state.data.purchases.filter(p=>inRange(p.received_on||''));
+  const totalPurchasesOut = purchasesInPeriod.reduce((a,b)=>a+Number(b.total_cost||0),0);
+
+  // === LOANS ISSUED ===
+  const loansIssued = state.data.loans.filter(l=>inRange(l.start_date||''));
+  const totalLoansOut = loansIssued.reduce((a,b)=>a+Number(b.loan_value||0),0);
+
+  // === BALANCE SHEET SNAPSHOT ===
+  const activeLoans = state.data.loans.filter(l=>l.status==='active');
+  const totalOutstanding = activeLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
+  const totalSavingsBalance = state.data.members.reduce((a,m)=>a+memberSavings(m.id),0);
+  const inventoryValue = state.data.inventory.reduce((a,i)=>a+Number(i.loan_price||0)*Number(i.stock||0),0);
+  const inventoryCost = state.data.inventory.reduce((a,i)=>a+Number(i.buying_price||0)*Number(i.stock||0),0);
+
+  // === RECONCILIATION STATUS ===
+  const reconInPeriod = state.data.reconciliations.filter(r=>inRange(r.meeting_date||''));
+  const reconConfirmed = reconInPeriod.filter(r=>r.status==='confirmed').reduce((a,b)=>a+Number(b.grand_total||0),0);
+  const reconPending = reconInPeriod.filter(r=>r.status==='pending').reduce((a,b)=>a+Number(b.grand_total||0),0);
+
+  // By-group savings breakdown
+  const groupBreakdown = state.data.groups.map(g=>{
+    const sv = savingsInPeriod.filter(s=>s.group_id===g.id).reduce((a,b)=>a+Number(b.amount||0),0);
+    const rp = repayInPeriod.filter(r=>r.group_id===g.id).reduce((a,b)=>a+Number(b.amount||0),0);
+    return { name:g.name, savings:sv, repayments:rp, total:sv+rp };
+  }).filter(g=>g.total>0).sort((a,b)=>b.total-a.total);
+
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>Accounting</h1><div class="desc">Full money-flow view across savings, loans, purchases and reconciliations.</div></div>
+      <div class="actions"><button class="btn btn-outline" onclick="exportAccountingReport()">Export to Excel</button></div>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px">
+      ${filterBtns.map(([k,l])=>`<button class="btn btn-sm ${_dashFilter===k?'btn-primary':'btn-outline'}" onclick="_dashFilter='${k}';pageAccounting()">${l}</button>`).join('')}
+      ${_dashFilter==='custom'?`<input type="date" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomStart=this.value;pageAccounting()" />
+      <span class="muted" style="font-size:12px">to</span>
+      <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageAccounting()" />`:''}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px">
+      <div class="kpi k-success"><div class="l">Savings collected</div><div class="v">${KES(totalSavingsIn)}</div><div class="d">${savingsInPeriod.length} entries</div></div>
+      <div class="kpi k-primary"><div class="l">Loan repayments</div><div class="v">${KES(totalRepayIn)}</div><div class="d">Interest ${KES(totalInterestIn)}</div></div>
+      <div class="kpi k-warn"><div class="l">Loans issued (cash out)</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
+      <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="card card-pad">
+        <h3 style="margin:0 0 14px">Period Income Statement</h3>
+        <table class="summary-table" style="width:100%">
+          <tr><td>Savings received</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalSavingsIn)}</td></tr>
+          <tr><td>Loan repayments (principal)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalPrincipalIn)}</td></tr>
+          <tr><td>Interest income</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalInterestIn)}</td></tr>
+          <tr><td style="border-top:1px solid var(--border);padding-top:8px">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:1px solid var(--border);padding-top:8px">${KES(totalSavingsIn+totalRepayIn)}</td></tr>
+          <tr style="height:12px"><td></td><td></td></tr>
+          <tr><td>Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">- ${KES(totalPurchasesOut)}</td></tr>
+          <tr><td>Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">- ${KES(totalLoansOut)}</td></tr>
+          <tr><td style="border-top:1px solid var(--border);padding-top:8px">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:1px solid var(--border);padding-top:8px">- ${KES(totalPurchasesOut+totalLoansOut)}</td></tr>
+          <tr style="height:12px"><td></td><td></td></tr>
+          <tr><td style="font-weight:700;font-size:14px">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:15px;color:${(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)}</td></tr>
+        </table>
+      </div>
+      <div class="card card-pad">
+        <h3 style="margin:0 0 14px">Balance Sheet Snapshot (All-time)</h3>
+        <table class="summary-table" style="width:100%">
+          <tr><td>Total member savings (liability)</td><td style="text-align:right;font-weight:600">${KES(totalSavingsBalance)}</td></tr>
+          <tr><td>Loans outstanding (asset)</td><td style="text-align:right;font-weight:600">${KES(totalOutstanding)}</td></tr>
+          <tr><td>Inventory at loan price (asset)</td><td style="text-align:right;font-weight:600">${KES(inventoryValue)}</td></tr>
+          <tr><td>Inventory at cost (asset)</td><td style="text-align:right;font-weight:600">${KES(inventoryCost)}</td></tr>
+          <tr><td style="border-top:1px solid var(--border);padding-top:8px">Inventory margin</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:1px solid var(--border);padding-top:8px">${KES(inventoryValue-inventoryCost)}</td></tr>
+          <tr style="height:12px"><td></td><td></td></tr>
+          <tr><td>Paybill confirmed (period)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(reconConfirmed)}</td></tr>
+          <tr><td>Paybill pending confirmation</td><td style="text-align:right;font-weight:600;color:var(--warning)">${KES(reconPending)}</td></tr>
+        </table>
+      </div>
+    </div>
+
+    ${groupBreakdown.length ? `<div class="card">
+      <div class="card-head"><h3>Collections by group (period)</h3></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Group</th><th class="num">Savings</th><th class="num">Repayments</th><th class="num">Total collected</th></tr></thead>
+        <tbody>${groupBreakdown.map(g=>`<tr>
+          <td><b>${g.name}</b></td>
+          <td class="num">${KES(g.savings)}</td>
+          <td class="num">${KES(g.repayments)}</td>
+          <td class="num"><b>${KES(g.total)}</b></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : ''}
+  `;
+}
+function exportAccountingReport(){
+  const { start, end } = dashDateRange();
+  const inRange = date => date >= start && date <= end;
+  const wb = XLSX.utils.book_new();
+  // Savings
+  const savRows = state.data.savings.filter(s=>inRange(s.meeting_date||'')).map(s=>{
+    const m = state.data.members.find(x=>x.id===s.member_id), g=state.data.groups.find(x=>x.id===s.group_id);
+    return {Date:s.meeting_date,Group:g?.name,Member:m?.full_name,Amount:Number(s.amount)};
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(savRows), 'Savings');
+  // Repayments
+  const repRows = state.data.repayments.filter(r=>inRange(r.meeting_date||'')).map(r=>{
+    const m=state.data.members.find(x=>x.id===r.member_id);
+    return {Date:r.meeting_date,Member:m?.full_name,Amount:Number(r.amount),Principal:Number(r.principal),Interest:Number(r.interest)};
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(repRows), 'Repayments');
+  // Purchases
+  const purRows = state.data.purchases.filter(p=>inRange(p.received_on||'')).map(p=>({
+    Date:p.received_on,Supplier:p.supplier_name,Invoice:p.invoice_no,Total:Number(p.total_cost)
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purRows), 'Purchases');
+  // Loans
+  const lnRows = state.data.loans.filter(l=>inRange(l.start_date||'')).map(l=>{
+    const m=state.data.members.find(x=>x.id===l.member_id);
+    return {Date:l.start_date,Member:m?.full_name,Asset:l.asset_name,LoanValue:Number(l.loan_value),Weekly:Number(l.weekly_installment)};
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lnRows), 'Loans issued');
+  XLSX.writeFile(wb, `accounting_${start}_${end}.xlsx`);
+  toast('Accounting report exported','success');
+}
 (async function boot(){
   applyTheme();
   // Restore session
