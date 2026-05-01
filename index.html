@@ -3409,16 +3409,21 @@ function openReconForm(){
         const row = Object.fromEntries(fd);
         if(!row.group_id) return toast('Please select a group.','error');
         if(!row.amount_matched) return toast('Please confirm if the SMS amount matches.','error');
-        row.total_savings = Number(row.total_savings)||0;
-        row.total_repayments = Number(row.total_repayments)||0;
-        row.grand_total = row.total_savings + row.total_repayments;
-        row.status = 'pending';
-        row.logged_by = state.staff.id;
-        if(row.actual_sms_amount) row.actual_sms_amount = Number(row.actual_sms_amount)||0;
-        else delete row.actual_sms_amount;
-        // Remove fields that may not exist in the schema yet
-        delete row.notes;
-        const { data, error } = await sb.from('pb_reconciliations').insert(row).select().single();
+        // Build insert with only known columns — prevents schema cache errors
+        const insert = {
+          group_id: row.group_id,
+          meeting_date: row.meeting_date,
+          total_savings: Number(row.total_savings)||0,
+          total_repayments: Number(row.total_repayments)||0,
+          grand_total: (Number(row.total_savings)||0) + (Number(row.total_repayments)||0),
+          amount_matched: row.amount_matched,
+          status: 'pending',
+          logged_by: state.staff.id,
+        };
+        if(row.actual_sms_amount && Number(row.actual_sms_amount)>0){
+          insert.actual_sms_amount = Number(row.actual_sms_amount);
+        }
+        const { data, error } = await sb.from('pb_reconciliations').insert(insert).select().single();
         if(error) return toast(error.message,'error');
         state.data.reconciliations.unshift(data);
         audit('recon_create','pb_reconciliations',data.id,null,{ matched:row.amount_matched });
@@ -3508,7 +3513,7 @@ async function confirmRecon(id){
         const actualAmt = Number($('conf-amt').value)||r.grand_total;
         const notes = $('conf-notes').value.trim();
         const upd = {
-          status:'confirmed',
+          status: 'confirmed',
           confirmed_by: state.staff.id,
           mpesa_reference: ref||null,
           actual_amount_received: actualAmt,
