@@ -810,7 +810,7 @@ function navItems(){
     { k:'suppliers', label:'Suppliers', show:isAdmin || p.can_manage_suppliers, icon:supplierIcon() },
     { k:'purchases', label:'Purchases', show:isAdmin || p.can_manage_suppliers, icon:purchaseIcon() },
     { k:'orders', label:'Orders', show:isAdmin || p.can_submit_orders || p.can_approve_orders, icon:orderIcon() },
-    { k:'reconciliation', label:'Paybill Reconciliation', show:isAdmin, icon:recIcon() },
+    { k:'reconciliation', label:'Remittances', show:true, icon:recIcon() },
     { k:'accounting', label:'Accounting', show:isAdmin, icon:accountingIcon() },
     { k:'reports', label:'Reports', show:isAdmin || p.can_view_reports, icon:reportIcon() },
   ];
@@ -881,7 +881,7 @@ function pageTitle(){
     dashboard:'Dashboard', groups:'Groups', members:'Members', meeting:'Meeting Recorder',
     loans:'Active Loans', calculator:'Loan Calculator', inventory:'Inventory',
     suppliers:'Suppliers', purchases:'Purchases', orders:'Orders',
-    reconciliation:'Paybill Reconciliation', reports:'Reports', accounting:'Accounting',
+    reconciliation:'Remittances', reports:'Reports', accounting:'Accounting',
     staff:'Staff & Permissions', settings:'Settings', audit:'Audit Log',
     memberProfile:'Member Profile'
   })[state.view] || '—';
@@ -1337,14 +1337,14 @@ function pageMembers(){
             const sv = memberSavings(m.id);
             const elig = memberEligible(m.id);
             const ln = memberLoan(m.id);
-            return `<tr>
+            return `<tr style="cursor:pointer" onclick="state.viewCtx={memberId:'${m.id}'};state._memberProfileTab='overview';go('memberProfile')">
               <td><b>${m.full_name}</b><div class="muted" style="font-size:11px">${m.phone||''}</div></td>
               <td>${m.national_id}</td>
               <td>${g?.name||'—'}</td>
               <td class="num">${KES(sv)}</td>
               <td>${elig?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Not yet</span>'}</td>
               <td>${ln?'<span class="badge b-blue">Active</span>':'<span class="badge b-grey">None</span>'}</td>
-              <td><button class="act-btn" onclick="memberActions(event,'${m.id}')">···</button></td>
+              <td onclick="event.stopPropagation()"><button class="act-btn" onclick="memberActions(event,'${m.id}')">···</button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="7"><div class="empty"><h4>No members found</h4><p>Register a member to one of your active groups.</p></div></td></tr>`}
         </tbody>
@@ -1607,10 +1607,21 @@ function pageMemberProfile(){
   if(!m){ go('members'); return; }
   const g = state.data.groups.find(x=>x.id===m.group_id);
   const guars = state.data.guarantors.filter(x=>x.member_id===m.id);
-  const sv = state.data.savings.filter(x=>x.member_id===m.id).sort((a,b)=> b.meeting_date.localeCompare(a.meeting_date));
-  const total = sv.reduce((a,b)=>a+Number(b.amount||0),0);
+  const sv = state.data.savings.filter(x=>x.member_id===m.id).sort((a,b)=>b.meeting_date.localeCompare(a.meeting_date));
+  const totalSv = sv.reduce((a,b)=>a+Number(b.amount||0),0);
   const ln = memberLoan(m.id);
-  const orders = state.data.orders.filter(o=>o.member_id===m.id);
+  const allLoans = state.data.loans.filter(l=>l.member_id===m.id).sort((a,b)=>new Date(b.start_date)-new Date(a.start_date));
+  const orders = state.data.orders.filter(o=>o.member_id===m.id).sort((a,b)=>new Date(b.ordered_on)-new Date(a.ordered_on));
+  const repayments = state.data.repayments.filter(r=>r.member_id===m.id).sort((a,b)=>b.meeting_date.localeCompare(a.meeting_date));
+  const tab = state._memberProfileTab || 'overview';
+
+  const tabs = [
+    { k:'overview', label:'Overview' },
+    { k:'savings', label:`Savings (${sv.length})` },
+    { k:'loans', label:`Loans (${allLoans.length})` },
+    { k:'repayments', label:`Repayments (${repayments.length})` },
+    { k:'orders', label:`Orders (${orders.length})` },
+  ];
 
   $('page').innerHTML = `
     <div class="page-head">
@@ -1624,52 +1635,169 @@ function pageMemberProfile(){
       </div>
     </div>
 
-    <div class="kpi-grid">
-      <div class="kpi k-success"><div class="l">Savings balance</div><div class="v">${KES(total)}</div><div class="d">${memberEligible(m.id)?'<span class="badge b-green">Loan eligible</span>':'<span class="badge b-grey">Below threshold</span>'}</div></div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+      <div class="kpi k-success"><div class="l">Total savings</div><div class="v">${KES(totalSv)}</div><div class="d">${memberEligible(m.id)?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Below threshold</span>'}</div></div>
       <div class="kpi k-primary"><div class="l">Active loan</div><div class="v">${ln?KES(ln.loan_value):'—'}</div><div class="d">${ln?'Outstanding '+KES(Number(ln.total_payable)-loanPaid(ln.id)):'No active loan'}</div></div>
-      <div class="kpi"><div class="l">Orders placed</div><div class="v">${orders.length}</div><div class="d">${orders.filter(o=>o.status==='pending').length} pending</div></div>
-      <div class="kpi k-warn"><div class="l">Member since</div><div class="v" style="font-size:18px">${fmtDate(m.registered_on)}</div></div>
+      <div class="kpi"><div class="l">Total repaid</div><div class="v">${KES(repayments.reduce((a,b)=>a+Number(b.amount||0),0))}</div><div class="d">${repayments.length} entries</div></div>
+      <div class="kpi k-warn"><div class="l">Member since</div><div class="v" style="font-size:16px">${fmtDate(m.registered_on)}</div></div>
     </div>
 
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-head"><h3>Savings history</h3><div class="sub">${sv.length} entries</div></div>
-        <div class="table-wrap" style="border:none;border-radius:0">
-          <table class="tbl">
-            <thead><tr><th>Date</th><th class="num">Amount</th><th>Recorded by</th></tr></thead>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px;border-bottom:2px solid var(--border);padding-bottom:0">
+      ${tabs.map(t=>`<button onclick="state._memberProfileTab='${t.k}';pageMemberProfile()"
+        style="padding:9px 16px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;border-bottom:2px solid ${tab===t.k?'var(--accent)':'transparent'};color:${tab===t.k?'var(--accent)':'var(--text-muted)'};margin-bottom:-2px">${t.label}</button>`).join('')}
+    </div>
+
+    <div id="member-tab-body">
+      ${tab==='overview' ? `
+        <div class="grid-2">
+          <div class="card card-pad">
+            <h3 style="margin:0 0 12px">Personal details</h3>
+            <table style="width:100%;font-size:13px;border-collapse:collapse">
+              ${[
+                ['Full name', m.full_name],
+                ['National ID', m.national_id],
+                ['Date of birth', m.date_of_birth ? fmtDate(m.date_of_birth) : '—'],
+                ['Gender', m.gender||'—'],
+                ['Phone', m.phone||'—'],
+                ['Email', m.email||'—'],
+                ['Address', m.address||'—'],
+                ['Nearest town', m.nearest_town||'—'],
+                ['Occupation', m.occupation||'—'],
+                ['Employer', m.employer||'—'],
+                ['Income estimate', m.income_estimate ? KES(m.income_estimate) : '—'],
+                ['Status', `<span class="badge ${m.status==='active'?'b-green':'b-grey'}">${m.status}</span>`],
+              ].map(([l,v])=>`<tr><td style="padding:5px 0;color:var(--text-muted);width:44%">${l}</td><td style="padding:5px 0;font-weight:500">${v}</td></tr>`).join('')}
+            </table>
+          </div>
+          <div class="card card-pad">
+            <h3 style="margin:0 0 12px">Guarantors</h3>
+            ${guars.length ? guars.map(gn=>`
+              <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+                <div style="font-weight:600">${gn.full_name} <span class="muted" style="font-weight:400;font-size:12px">· ${gn.relationship||'—'}</span></div>
+                <div class="muted" style="font-size:12px">ID ${gn.national_id} · ${gn.phone} · ${gn.location||''}</div>
+              </div>`).join('') : '<p class="muted">No guarantors recorded.</p>'}
+          </div>
+        </div>
+      ` : ''}
+
+      ${tab==='savings' ? `
+        <div class="card">
+          <div class="card-head"><h3>Savings history</h3><div class="sub">Total: ${KES(totalSv)}</div></div>
+          <div style="overflow-x:auto"><table class="tbl">
+            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Recorded by</th></tr></thead>
             <tbody>
-              ${sv.map(s => {
-                const officer = state.data.staff.find(x=>x.id===s.recorded_by);
-                return `<tr><td>${fmtDate(s.meeting_date)}</td><td class="num">${KES(s.amount)}</td><td>${officer?.full_name||'—'}</td></tr>`;
-              }).join('') || `<tr><td colspan="3" class="empty"><h4>No savings yet</h4><p>Savings will appear after the first meeting entry.</p></td></tr>`}
+              ${(()=>{
+                let running = 0;
+                return [...sv].reverse().map(s=>{
+                  running += Number(s.amount||0);
+                  const officer = state.data.staff.find(x=>x.id===s.recorded_by);
+                  return `<tr><td>${fmtDate(s.meeting_date)}</td><td class="num">${KES(s.amount)}</td><td class="num" style="color:var(--success)">${KES(running)}</td><td>${officer?.full_name||'—'}</td></tr>`;
+                }).reverse().join('');
+              })()}
+              ${!sv.length?`<tr><td colspan="4"><div class="empty"><h4>No savings yet</h4></div></td></tr>`:''}
             </tbody>
-          </table>
+          </table></div>
         </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Guarantors</h3></div>
-        <div class="card-pad">
-          ${guars.map(gn => `
-            <div style="padding:10px 0;border-bottom:1px solid var(--border)">
-              <div style="font-weight:600">${gn.full_name} <span class="muted" style="font-weight:400;font-size:12px">· ${gn.relationship||'—'}</span></div>
-              <div class="muted" style="font-size:12px">ID ${gn.national_id} · ${gn.phone} · ${gn.location||''}</div>
-            </div>
-          `).join('') || `<p class="muted">No guarantors recorded.</p>`}
-        </div>
-      </div>
-    </div>
+      ` : ''}
 
-    ${ln ? `<div class="card" style="margin-top:18px">
-      <div class="card-head"><h3>Active loan</h3></div>
-      <div class="card-pad grid-3">
-        <div><div class="muted" style="font-size:11px">Asset</div><div style="font-weight:600">${ln.asset_name}</div></div>
-        <div><div class="muted" style="font-size:11px">Loan value</div><div style="font-weight:600">${KES(ln.loan_value)}</div></div>
-        <div><div class="muted" style="font-size:11px">Total payable</div><div style="font-weight:600">${KES(ln.total_payable)}</div></div>
-        <div><div class="muted" style="font-size:11px">Weekly installment</div><div style="font-weight:600">${KES(ln.weekly_installment)}</div></div>
-        <div><div class="muted" style="font-size:11px">Paid to date</div><div style="font-weight:600">${KES(loanPaid(ln.id))}</div></div>
-        <div><div class="muted" style="font-size:11px">Outstanding</div><div style="font-weight:600;color:var(--danger)">${KES(Number(ln.total_payable)-loanPaid(ln.id))}</div></div>
-      </div>
-    </div>` : ''}
+      ${tab==='loans' ? `
+        ${allLoans.length ? allLoans.map(l => {
+          const paid = loanPaid(l.id);
+          const outstanding = Number(l.total_payable||0) - paid;
+          const pct = Math.min(100, Math.round(paid/Number(l.total_payable||1)*100));
+          const schedule = computeSchedule(Number(l.loan_value), Number(l.weekly_installment), 'flat', new Date(l.start_date));
+          const today = todayISO();
+          return `<div class="card" style="margin-bottom:14px">
+            <div class="card-head">
+              <h3>${l.asset_name} ${l.asset_quantity>1?'× '+l.asset_quantity:''}</h3>
+              <span class="badge ${l.status==='active'?'b-blue':'b-grey'}">${l.status}</span>
+            </div>
+            <div class="card-pad">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:14px">
+                <div><div class="muted" style="font-size:11px">Loan value</div><div style="font-weight:600">${KES(l.loan_value)}</div></div>
+                <div><div class="muted" style="font-size:11px">Total payable</div><div style="font-weight:600">${KES(l.total_payable)}</div></div>
+                <div><div class="muted" style="font-size:11px">Weekly installment</div><div style="font-weight:600">${KES(l.weekly_installment)}</div></div>
+                <div><div class="muted" style="font-size:11px">Start date</div><div style="font-weight:600">${fmtDate(l.start_date)}</div></div>
+                <div><div class="muted" style="font-size:11px">Expected end</div><div style="font-weight:600">${fmtDate(l.expected_end_date)}</div></div>
+                <div><div class="muted" style="font-size:11px">Paid</div><div style="font-weight:600;color:var(--success)">${KES(paid)}</div></div>
+                <div><div class="muted" style="font-size:11px">Outstanding</div><div style="font-weight:600;color:var(--danger)">${KES(outstanding)}</div></div>
+              </div>
+              <div style="margin-bottom:14px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>Repayment progress</span><span>${pct}%</span></div>
+                <div style="height:8px;background:var(--border);border-radius:99px;overflow:hidden">
+                  <div style="height:100%;width:${pct}%;background:var(--success);border-radius:99px;transition:width .4s"></div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:8px">Repayment schedule (${schedule.weeks} weeks)</div>
+                <div style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
+                  <table class="tbl" style="font-size:12px">
+                    <thead><tr><th>Week</th><th>Due date</th><th class="num">Principal</th><th class="num">Interest</th><th class="num">Installment</th><th class="num">Balance</th><th>Status</th></tr></thead>
+                    <tbody>
+                      ${schedule.rows.slice(0,100).map(row=>{
+                        const dueISO = row.due.toISOString().slice(0,10);
+                        const isPast = dueISO < today;
+                        const isFuture = dueISO > today;
+                        const rowSt = isPast ? (paid >= row.w * Number(l.weekly_installment) ? 'b-green' : 'b-red') : isFuture ? 'b-grey' : 'b-yellow';
+                        const rowTxt = isPast ? (paid >= row.w * Number(l.weekly_installment) ? 'Paid' : 'Overdue') : dueISO===today ? 'Due today' : 'Upcoming';
+                        return `<tr style="${isPast&&rowSt==='b-red'?'background:var(--danger-50)':''}">
+                          <td>${row.w}</td>
+                          <td style="white-space:nowrap">${fmtDate(dueISO)}</td>
+                          <td class="num">${KES(row.principal)}</td>
+                          <td class="num">${KES(row.interest)}</td>
+                          <td class="num"><b>${KES(row.installment)}</b></td>
+                          <td class="num">${KES(row.balance)}</td>
+                          <td><span class="badge ${rowSt}">${rowTxt}</span></td>
+                        </tr>`;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        }).join('') : `<div class="card card-pad empty"><h4>No loans yet</h4><p>This member has not had any loans issued.</p></div>`}
+      ` : ''}
+
+      ${tab==='repayments' ? `
+        <div class="card">
+          <div class="card-head"><h3>Repayment history</h3><div class="sub">Total repaid: ${KES(repayments.reduce((a,b)=>a+Number(b.amount||0),0))}</div></div>
+          <div style="overflow-x:auto"><table class="tbl">
+            <thead><tr><th>Date</th><th class="num">Amount</th><th class="num">Principal</th><th class="num">Interest</th><th>Recorded by</th></tr></thead>
+            <tbody>
+              ${repayments.map(r=>{
+                const officer = state.data.staff.find(x=>x.id===r.recorded_by);
+                return `<tr>
+                  <td>${fmtDate(r.meeting_date)}</td>
+                  <td class="num"><b>${KES(r.amount)}</b></td>
+                  <td class="num">${KES(r.principal)}</td>
+                  <td class="num">${KES(r.interest)}</td>
+                  <td>${officer?.full_name||'—'}</td>
+                </tr>`;
+              }).join('') || `<tr><td colspan="5"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
+            </tbody>
+          </table></div>
+        </div>
+      ` : ''}
+
+      ${tab==='orders' ? `
+        <div class="card">
+          <div class="card-head"><h3>Order history</h3><div class="sub">${orders.length} orders</div></div>
+          <div style="overflow-x:auto"><table class="tbl">
+            <thead><tr><th>Date</th><th>Asset</th><th class="num">Qty</th><th>Status</th><th>Notes</th></tr></thead>
+            <tbody>
+              ${orders.map(o=>`<tr>
+                <td>${fmtDate(o.ordered_on)}</td>
+                <td>${o.asset_name}</td>
+                <td class="num">${o.quantity}</td>
+                <td><span class="badge ${o.status==='fulfilled'?'b-green':o.status==='pending'?'b-yellow':'b-grey'}">${o.status}</span></td>
+                <td class="muted" style="font-size:12px">${o.notes||'—'}</td>
+              </tr>`).join('') || `<tr><td colspan="5"><div class="empty"><h4>No orders yet</h4></div></td></tr>`}
+            </tbody>
+          </table></div>
+        </div>
+      ` : ''}
+    </div>
   `;
 }
 
@@ -2004,12 +2132,28 @@ function computeSchedule(principal, weekly, method, startDate){
  * ===================================================================== */
 function pageInventory(){
   const inv = state.data.inventory;
+  const q = (state._invSearch||'').toLowerCase();
+  const filtered = q ? inv.filter(a=>a.name.toLowerCase().includes(q)||(a.category||'').toLowerCase().includes(q)) : inv;
+  const PAGE_SIZE = 20;
+  const _page = state._invPage||0;
+  const total = filtered.length;
+  const paged = filtered.slice(_page*PAGE_SIZE, (_page+1)*PAGE_SIZE);
+
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Inventory</h1><div class="desc">Assets available for loan issuance.</div></div>
       <div class="actions">
+        <button class="btn btn-outline" onclick="downloadInventoryTemplate()">⬇ Download template</button>
+        <button class="btn btn-outline" onclick="$('inv-import').click()">⬆ Import from Excel</button>
+        <input type="file" id="inv-import" accept=".xlsx,.xls,.csv" style="display:none" onchange="importInventory(this)" />
         <button class="btn btn-outline" onclick="exportInventory()">Export</button>
         <button class="btn btn-primary" onclick="openAssetForm()">Add asset</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="search-box grow">
+        <span class="ic">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
+        <input id="inv-search" placeholder="Search assets…" value="${state._invSearch||''}" />
       </div>
     </div>
     <div class="table-wrap">
@@ -2019,7 +2163,7 @@ function pageInventory(){
           <th class="num">Total cost value</th><th class="num">Total loan value</th><th class="num">Margin</th><th>Status</th><th></th>
         </tr></thead>
         <tbody>
-          ${inv.map(a => {
+          ${paged.map(a => {
             const margin = a.loan_price && a.buying_price ? ((a.loan_price-a.buying_price)/a.loan_price*100) : 0;
             const totalCost = Number(a.buying_price||0)*Number(a.stock||0);
             const totalLoan = Number(a.loan_price||0)*Number(a.stock||0);
@@ -2036,11 +2180,121 @@ function pageInventory(){
               <td>${status}</td>
               <td><button class="act-btn" onclick="invActions(event,'${a.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No inventory yet</h4><p>Add the assets your business offers as loans.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No inventory yet</h4><p>Add assets manually or import from Excel.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
+    ${total > PAGE_SIZE ? `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--text-muted)">
+      <button class="btn btn-sm btn-outline" ${_page===0?'disabled':''} onclick="state._invPage=${_page-1};pageInventory()">← Prev</button>
+      <span>Page ${_page+1} of ${Math.ceil(total/PAGE_SIZE)} &nbsp;(${total} assets)</span>
+      <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._invPage=${_page+1};pageInventory()">Next →</button>
+    </div>` : ''}
   `;
+  $('inv-search').addEventListener('input', e=>{ state._invSearch=e.target.value; state._invPage=0; pageInventory(); });
+}
+
+function downloadInventoryTemplate(){
+  const wb = XLSX.utils.book_new();
+  const template = [
+    { name:'Example Sofa Set', category:'Furniture', stock:10, buying_price:15000, loan_price:18000, reorder_level:3 },
+    { name:'Blanket', category:'Bedding', stock:50, buying_price:800, loan_price:1000, reorder_level:10 },
+  ];
+  const ws = XLSX.utils.json_to_sheet(template);
+  // Add column header comments by widening columns
+  ws['!cols'] = [
+    {wch:30},{wch:16},{wch:10},{wch:16},{wch:16},{wch:14}
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
+  XLSX.writeFile(wb, 'PrimeBraidox_Inventory_Template.xlsx');
+  toast('Template downloaded. Fill in your assets then re-upload.','info');
+}
+
+async function importInventory(input){
+  const file = input.files[0];
+  if(!file){ input.value=''; return; }
+  if(!(await ensureFreshToken())){ input.value=''; return; }
+
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type:'array' });
+      // Accept any sheet name — use the first sheet
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval:'' });
+
+      if(!rows.length){ toast('No data rows found in the file.','error'); input.value=''; return; }
+
+      // Flexible column mapping — handle variations in header names
+      const colMap = (row) => {
+        const keys = Object.keys(row);
+        const find = (...candidates) => {
+          for(const c of candidates){
+            const k = keys.find(k=>k.toLowerCase().replace(/[\s_]/g,'').includes(c.toLowerCase().replace(/[\s_]/g,'')));
+            if(k !== undefined) return row[k];
+          }
+          return '';
+        };
+        return {
+          name:        String(find('name','asset','item','product','description')||'').trim(),
+          category:    String(find('category','cat','type','group')||'Other').trim()||'Other',
+          stock:       Number(find('stock','qty','quantity','units')||0),
+          buying_price:Number(find('buying','cost','purchase','buyprice','costperunit')||0),
+          loan_price:  Number(find('loan','selling','sell','loanprice','sellingprice')||0),
+          reorder_level:Number(find('reorder','minimum','min','minstock')||5),
+        };
+      };
+
+      const mapped = rows.map(colMap).filter(r=>r.name);
+      if(!mapped.length){ toast('Could not find any rows with an asset name. Check the file has a "name" or "asset" column.','error'); input.value=''; return; }
+
+      // Preview before importing
+      modal({
+        title:`Import ${mapped.length} assets`,
+        size:'lg',
+        body:`
+          <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+            Found <b>${mapped.length} assets</b> in the file. Review below then confirm to add them all to inventory.
+            Assets already in the system will be <b>skipped</b> (matched by name).
+          </div>
+          <div style="max-height:320px;overflow-y:auto">
+            <table class="tbl" style="font-size:12px">
+              <thead><tr><th>Name</th><th>Category</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Loan price</th></tr></thead>
+              <tbody>
+                ${mapped.map(r=>`<tr>
+                  <td>${r.name}</td><td>${r.category}</td>
+                  <td class="num">${r.stock}</td>
+                  <td class="num">${KES(r.buying_price)}</td>
+                  <td class="num">${KES(r.loan_price)}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        `,
+        actions:[
+          { label:'Cancel', onClick: ()=>{ closeModal(); input.value=''; } },
+          { label:`Import all ${mapped.length}`, cls:'btn-primary', onClick: async ()=>{
+            closeModal();
+            let added=0, skipped=0, failed=0;
+            for(const row of mapped){
+              const exists = state.data.inventory.find(a=>a.name.toLowerCase()===row.name.toLowerCase());
+              if(exists){ skipped++; continue; }
+              const { data, error } = await sb.from('pb_inventory').insert(row).select().single();
+              if(error){ failed++; console.warn('Import failed for',row.name,error.message); }
+              else { state.data.inventory.push(data); added++; }
+            }
+            input.value='';
+            render();
+            toast(`Import done: ${added} added, ${skipped} skipped (already exist), ${failed} failed.`, failed>0?'warn':'success');
+          }}
+        ]
+      });
+    } catch(err){
+      toast('Could not read file: '+err.message,'error');
+      input.value='';
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 function invActions(ev, id){
   const a = state.data.inventory.find(x=>x.id===id);
@@ -2967,131 +3221,312 @@ async function submitPurchase(){
   closeModal(); render(); toast('Stock received and inventory updated','success');
 }
 
+
 /* =====================================================================
- * PAGE: PAYBILL RECONCILIATION
+ * PAGE: REMITTANCES  (Maker-Checker workflow)
  * ===================================================================== */
 function pageReconciliation(){
-  const list = (state.data.reconciliations||[]).slice().sort((a,b)=> new Date(b.meeting_date)-new Date(a.meeting_date));
+  const isAdmin = state.staff.role === 'admin';
+  const list = (state.data.reconciliations||[]).slice()
+    .sort((a,b)=> new Date(b.meeting_date)-new Date(a.meeting_date));
   const pending = list.filter(r=>r.status==='pending');
+
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Paybill reconciliation</h1><div class="desc">Match weekly M-Pesa remittances from group chairmen to meeting collection records.</div></div>
-      <div class="actions"><button class="btn btn-primary" onclick="openReconForm()">Record remittance</button></div>
+      <div>
+        <h1>Chairman remittances</h1>
+        <div class="desc">${isAdmin
+          ? pending.length
+            ? `<span style="color:var(--warning);font-weight:600">${pending.length} pending your confirmation</span>`
+            : 'All remittances confirmed.'
+          : 'Log the cash the chairman sends to Paybill after each meeting.'}</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="openReconForm()">Log remittance</button>
+      </div>
     </div>
 
+    ${!isAdmin ? `
     <div class="card card-pad" style="margin-bottom:16px;background:var(--info-50);border-color:var(--info)">
-      <div style="font-weight:700;color:var(--info);margin-bottom:6px">How paybill reconciliation works</div>
-      <div style="font-size:13px;color:var(--text);line-height:1.7">
-        <b>1. After each meeting</b>, the group chairman collects cash savings and loan repayments from members.<br>
-        <b>2. The chairman remits this money</b> to the business M-Pesa Paybill. They receive an <b>M-Pesa confirmation SMS</b> — e.g. <em>"QHJ4KL2MPX confirmed. You have sent KES 4,500 to Paybill..."</em><br>
-        <b>3. The chairman shares the M-Pesa code</b> (e.g. <code style="background:var(--surface);padding:1px 6px;border-radius:4px;font-family:monospace">QHJ4KL2MPX</code>) with the loan officer or admin.<br>
-        <b>4. The loan officer/admin records the remittance here</b>, pasting that code as the M-Pesa Reference. The system auto-fills savings & repayment totals from meeting records.<br>
-        <b>5. An admin confirms</b> the remittance once the Paybill statement is checked to match.
+      <div style="font-weight:700;color:var(--info);margin-bottom:6px">Your job — Field logger</div>
+      <div style="font-size:13px;line-height:1.9">
+        <b>1.</b> After the meeting, the chairman collects cash from members (savings + repayments).<br>
+        <b>2.</b> The chairman sends the total to the business M-Pesa Paybill and shows you the SMS.<br>
+        <b>3.</b> You click <b>Log remittance</b> — the system auto-fills the expected amount from meeting records.<br>
+        <b>4.</b> You confirm whether the SMS amount matches, then submit. The admin confirms receipt on their end.
       </div>
-      ${pending.length ? `<div style="margin-top:10px;font-weight:600;color:var(--warning)">${pending.length} remittance${pending.length>1?'s':''} pending confirmation.</div>` : ''}
-    </div>
+    </div>` : ''}
 
-    <div class="table-wrap"><table class="tbl">
-      <thead><tr><th>Meeting date</th><th>Group</th><th class="num">Savings</th><th class="num">Repayments</th><th class="num">Grand total</th><th>M-Pesa ref</th><th>Status</th><th></th></tr></thead>
-      <tbody>${list.map(r => {
-        const g = state.data.groups.find(x=>x.id===r.group_id);
-        return `<tr>
-          <td>${fmtDate(r.meeting_date)}</td>
-          <td>${g?.name||'—'}</td>
-          <td class="num">${KES(r.total_savings)}</td>
-          <td class="num">${KES(r.total_repayments)}</td>
-          <td class="num"><b>${KES(r.grand_total)}</b></td>
-          <td><code style="font-family:monospace;font-size:12px;background:var(--surface-2);padding:2px 6px;border-radius:4px">${r.mpesa_reference||'—'}</code></td>
-          <td><span class="badge ${r.status==='confirmed'?'b-green':'b-yellow'}">${r.status}</span></td>
-          <td><button class="act-btn" onclick="reconActions(event,'${r.id}')">···</button></td>
-        </tr>`;
-      }).join('') || `<tr><td colspan="8"><div class="empty"><h4>No remittances recorded</h4><p>Record the chairman's M-Pesa remittance after each meeting.</p></div></td></tr>`}</tbody>
-    </table></div>`;
+    ${isAdmin && pending.length ? `
+    <div class="card" style="margin-bottom:16px;border-color:var(--warning)">
+      <div class="card-head" style="border-color:var(--warning);background:var(--warning-50)">
+        <h3 style="color:var(--warning)">⚠ Pending your confirmation (${pending.length})</h3>
+        <div class="sub">Check your M-Pesa Paybill statement then confirm each one.</div>
+      </div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Date</th><th>Group</th><th>Logged by</th><th class="num">Expected total</th><th>Officer SMS check</th><th></th></tr></thead>
+        <tbody>${pending.map(r=>{
+          const g = state.data.groups.find(x=>x.id===r.group_id);
+          const off = state.data.staff.find(x=>x.id===r.logged_by);
+          const mc = r.amount_matched==='yes'
+            ? '<span class="badge b-green">✓ Matches</span>'
+            : r.amount_matched==='no'
+            ? '<span class="badge b-red">✗ Differs</span>'
+            : '<span class="badge b-grey">—</span>';
+          return `<tr>
+            <td>${fmtDate(r.meeting_date)}</td>
+            <td><b>${g?.name||'—'}</b></td>
+            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'—'}</td>
+            <td class="num"><b>${KES(r.grand_total)}</b></td>
+            <td>${mc}${r.amount_matched==='no'&&r.actual_sms_amount?` <span class="muted" style="font-size:11px">(SMS: ${KES(r.actual_sms_amount)})</span>`:''}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="confirmRecon('${r.id}')">Confirm received</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>` : ''}
+
+    <div class="card">
+      <div class="card-head"><h3>All remittances</h3><div class="sub">${list.length} records</div></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr>
+          <th>Meeting date</th><th>Group</th><th>Logged by</th>
+          <th class="num">Savings</th><th class="num">Repayments</th><th class="num">Total</th>
+          <th>SMS match</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody>${list.map(r=>{
+          const g = state.data.groups.find(x=>x.id===r.group_id);
+          const off = state.data.staff.find(x=>x.id===r.logged_by);
+          const mc = r.amount_matched==='yes'
+            ? '<span class="badge b-green">✓ Matches</span>'
+            : r.amount_matched==='no'
+            ? '<span class="badge b-red">✗ Differs</span>'
+            : '<span class="badge b-grey">—</span>';
+          const mpesaRef = r.mpesa_reference
+            ? `<code style="font-family:monospace;font-size:11px;background:var(--surface-2);padding:1px 5px;border-radius:3px">${r.mpesa_reference}</code>`
+            : '';
+          return `<tr>
+            <td>${fmtDate(r.meeting_date)}</td>
+            <td>${g?.name||'—'}</td>
+            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'—'}</td>
+            <td class="num">${KES(r.total_savings)}</td>
+            <td class="num">${KES(r.total_repayments)}</td>
+            <td class="num"><b>${KES(r.grand_total)}</b>${mpesaRef?`<div>${mpesaRef}</div>`:''}</td>
+            <td>${mc}</td>
+            <td><span class="badge ${r.status==='confirmed'?'b-green':'b-yellow'}">${r.status==='confirmed'?'Confirmed':'Pending'}</span></td>
+            <td><button class="act-btn" onclick="reconActions(event,'${r.id}')">···</button></td>
+          </tr>`;
+        }).join('')||`<tr><td colspan="9"><div class="empty"><h4>No remittances yet</h4><p>Loan officers log remittances after each meeting.</p></div></td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
 }
-function reconActions(ev, id){
-  const r = state.data.reconciliations.find(x=>x.id===id);
-  showActMenu(ev, [
-    ...(r.status==='pending' ? [{ label:'Mark as confirmed', onClick: async () => {
-      await sb.from('pb_reconciliations').update({ status:'confirmed' }).eq('id', id);
-      r.status='confirmed'; audit('recon_confirm','pb_reconciliations',id); render(); toast('Remittance confirmed','success');
-    }}] : []),
-    { label:'Delete', danger:true, onClick: ()=>confirmDialog('Delete this remittance record?', async()=>{
-      await sb.from('pb_reconciliations').delete().eq('id', id);
-      state.data.reconciliations = state.data.reconciliations.filter(x=>x.id!==id);
-      audit('delete','pb_reconciliations',id); render(); toast('Remittance deleted','success');
-    }, { title:'Delete remittance', danger:true }) }
-  ]);
-}
+
 function openReconForm(){
-  const groups = state.data.groups;
+  const isAdmin = state.staff.role === 'admin';
+  const myGroups = isAdmin
+    ? state.data.groups
+    : state.data.groups.filter(g=>g.officer_id===state.staff.id);
+
   modal({
-    title:'Record paybill remittance',
-    body:`<form id="rec-f">
-      <div class="field"><label>Group *</label>
-        <select name="group_id" required onchange="reconAutoTotals(this.value)">
-          <option value="">— Select group —</option>
-          ${groups.map(g=>`<option value="${g.id}">${g.name}</option>`).join('')}
-        </select>
+    title:'Log chairman remittance',
+    body:`
+      <div style="background:var(--info-50);border:1px solid var(--info);border-radius:var(--radius-sm);padding:11px 14px;margin-bottom:16px;font-size:13px">
+        Select the group and meeting date — the system will auto-fill the expected amount from your recorded savings and repayments.
       </div>
-      <div class="field"><label>Meeting date *</label><input type="date" name="meeting_date" value="${todayISO()}" required onchange="reconAutoTotals()" /></div>
-      <div class="grid-2">
-        <div class="field">
-          <label>Total savings collected (KES)</label>
-          <input id="rec-sv" name="total_savings" type="number" min="0" step="0.01" value="0" oninput="reconRecalc()" />
-          <div class="helper">Auto-filled from meeting records. Adjust if cash collected differs.</div>
+      <form id="rec-f">
+        <div class="grid-2">
+          <div class="field"><label>Group *</label>
+            <select name="group_id" required onchange="reconAutoTotals(this.value)">
+              <option value="">— Select group —</option>
+              ${myGroups.map(g=>`<option value="${g.id}">${g.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field"><label>Meeting date *</label>
+            <input type="date" name="meeting_date" value="${todayISO()}" required onchange="reconAutoTotals()" />
+          </div>
         </div>
-        <div class="field">
-          <label>Total repayments collected (KES)</label>
-          <input id="rec-rp" name="total_repayments" type="number" min="0" step="0.01" value="0" oninput="reconRecalc()" />
-          <div class="helper">Auto-filled from meeting records. Adjust if cash collected differs.</div>
+
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin-bottom:16px">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px">Expected from meeting records</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Savings</div>
+              <div style="font-weight:700;font-size:18px" id="rec-sv-disp">KES 0</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Repayments</div>
+              <div style="font-weight:700;font-size:18px" id="rec-rp-disp">KES 0</div>
+            </div>
+            <div style="background:var(--surface);border-radius:var(--radius-sm);padding:8px;border:1px solid var(--border)">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Chairman should send</div>
+              <div style="font-weight:800;font-size:20px;color:var(--accent)" id="rec-gt-disp">KES 0</div>
+            </div>
+          </div>
+          <input type="hidden" id="rec-sv" name="total_savings" value="0" />
+          <input type="hidden" id="rec-rp" name="total_repayments" value="0" />
+          <input type="hidden" id="rec-gt" name="grand_total" value="0" />
         </div>
-      </div>
-      <div class="field"><label>Grand total (auto-calculated)</label><input id="rec-gt" disabled value="0" /></div>
-      <div class="grid-2">
+
         <div class="field">
-          <label>M-Pesa reference number</label>
-          <input name="mpesa_reference" placeholder="e.g. QHJ4KL2MPX" />
-          <div class="helper">The M-Pesa confirmation code the chairman sends after remitting via Paybill. Found in the SMS sent to the chairman's phone after payment.</div>
+          <label>Does the chairman's M-Pesa SMS show this exact amount? *</label>
+          <select name="amount_matched" id="rec-match" required onchange="reconMatchChanged(this.value)">
+            <option value="">— Select after checking the SMS —</option>
+            <option value="yes">✓ Yes — the SMS amount matches exactly</option>
+            <option value="no">✗ No — the SMS amount is different</option>
+          </select>
+          <div class="helper">Look at the M-Pesa confirmation SMS the chairman is showing you and compare the amount above.</div>
         </div>
-        <div class="field"><label>Date remitted to Paybill</label><input type="date" name="remitted_on" value="${todayISO()}" /></div>
-      </div>
-      <div class="field"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
-    </form>`,
+
+        <div id="rec-diff-wrap" style="display:none" class="field">
+          <label>What amount does the SMS show? (KES)</label>
+          <input type="number" name="actual_sms_amount" id="rec-actual" min="0" step="0.01" placeholder="Enter the amount from the chairman's SMS" />
+          <div class="helper" style="color:var(--warning)">This discrepancy will be flagged for the admin to investigate.</div>
+        </div>
+
+        <div class="field"><label>Notes (optional)</label>
+          <textarea name="notes" rows="2" placeholder="Any extra context for the admin..."></textarea>
+        </div>
+      </form>
+    `,
     actions:[
       { label:'Cancel', onClick: closeModal },
-      { label:'Save', cls:'btn-primary', onClick: async () => {
+      { label:'Submit', cls:'btn-primary', onClick: async () => {
         if(!(await ensureFreshToken())) return;
-        const fd = new FormData($('rec-f')); const row = Object.fromEntries(fd);
-        ['total_savings','total_repayments'].forEach(k => row[k] = Number(row[k])||0);
+        const fd = new FormData($('rec-f'));
+        const row = Object.fromEntries(fd);
+        if(!row.group_id) return toast('Please select a group.','error');
+        if(!row.amount_matched) return toast('Please confirm if the SMS amount matches.','error');
+        row.total_savings = Number(row.total_savings)||0;
+        row.total_repayments = Number(row.total_repayments)||0;
         row.grand_total = row.total_savings + row.total_repayments;
         row.status = 'pending';
+        row.logged_by = state.staff.id;
+        if(row.actual_sms_amount) row.actual_sms_amount = Number(row.actual_sms_amount)||0;
+        else delete row.actual_sms_amount;
         const { data, error } = await sb.from('pb_reconciliations').insert(row).select().single();
         if(error) return toast(error.message,'error');
         state.data.reconciliations.unshift(data);
-        audit('recon_create','pb_reconciliations',data.id);
-        closeModal(); render(); toast('Remittance recorded','success');
+        audit('recon_create','pb_reconciliations',data.id,null,{ matched:row.amount_matched });
+        closeModal(); render();
+        toast(row.amount_matched==='yes'
+          ? 'Remittance logged ✓ — waiting for admin to confirm receipt.'
+          : 'Remittance logged with discrepancy — admin will investigate.','success');
       }}
     ]
   });
 }
-function reconRecalc(){
-  const a = Number($('rec-sv').value)||0, b = Number($('rec-rp').value)||0;
-  $('rec-gt').value = (a+b).toFixed(2);
+
+function reconMatchChanged(val){
+  const wrap = $('rec-diff-wrap');
+  if(wrap) wrap.style.display = val==='no' ? 'block' : 'none';
 }
+
+function reconRecalc(){
+  const sv = Number($('rec-sv')?.value||0);
+  const rp = Number($('rec-rp')?.value||0);
+  const total = sv + rp;
+  if($('rec-gt')) $('rec-gt').value = total;
+  if($('rec-sv-disp')) $('rec-sv-disp').textContent = KES(sv);
+  if($('rec-rp-disp')) $('rec-rp-disp').textContent = KES(rp);
+  if($('rec-gt-disp')) $('rec-gt-disp').textContent = KES(total);
+}
+
 function reconAutoTotals(groupId){
   const f = $('rec-f'); if(!f) return;
   const gid = groupId || f.querySelector('[name="group_id"]')?.value;
   const date = f.querySelector('[name="meeting_date"]')?.value;
   if(!gid || !date) return;
-  const sv = state.data.savings.filter(s=>s.group_id===gid && s.meeting_date===date).reduce((a,b)=>a+Number(b.amount||0),0);
-  const rp = state.data.repayments.filter(r=>r.group_id===gid && r.meeting_date===date).reduce((a,b)=>a+Number(b.amount||0),0);
+  const sv = state.data.savings
+    .filter(s=>s.group_id===gid && s.meeting_date===date)
+    .reduce((a,b)=>a+Number(b.amount||0),0);
+  const rp = state.data.repayments
+    .filter(r=>r.group_id===gid && r.meeting_date===date)
+    .reduce((a,b)=>a+Number(b.amount||0),0);
   if($('rec-sv')) $('rec-sv').value = sv;
   if($('rec-rp')) $('rec-rp').value = rp;
   reconRecalc();
-  if(sv > 0 || rp > 0){
-    toast(`Auto-filled from meeting on ${date}: savings ${KES(sv)}, repayments ${KES(rp)}.`, 'info');
-  }
+  if(sv>0||rp>0) toast(`Auto-filled: savings ${KES(sv)} + repayments ${KES(rp)} = ${KES(sv+rp)}`,'info');
+  else toast('No meeting records found for this group and date.','warn');
 }
+
+async function confirmRecon(id){
+  if(!(await ensureFreshToken())) return;
+  const r = state.data.reconciliations.find(x=>x.id===id);
+  if(!r) return;
+  const g = state.data.groups.find(x=>x.id===r.group_id);
+  modal({
+    title:'Confirm remittance received',
+    body:`
+      <div class="card card-pad" style="background:var(--surface-2);margin-bottom:16px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
+          <div><div class="muted" style="font-size:11px">Group</div><b>${g?.name||'—'}</b></div>
+          <div><div class="muted" style="font-size:11px">Meeting date</div><b>${fmtDate(r.meeting_date)}</b></div>
+          <div><div class="muted" style="font-size:11px">Savings</div>${KES(r.total_savings)}</div>
+          <div><div class="muted" style="font-size:11px">Repayments</div>${KES(r.total_repayments)}</div>
+        </div>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:13px;color:var(--text-muted)">Officer logged expected total</div>
+          <div style="font-weight:800;font-size:20px;color:var(--accent)">${KES(r.grand_total)}</div>
+        </div>
+        ${r.amount_matched==='no'?`<div style="margin-top:8px;padding:8px 10px;background:var(--danger-50);border-radius:var(--radius-sm);font-size:12px;color:var(--danger)">
+          ⚠ Officer reported SMS amount differs${r.actual_sms_amount?' — SMS showed '+KES(r.actual_sms_amount):''}
+        </div>`:''}
+      </div>
+      <div class="field">
+        <label>M-Pesa reference from your Paybill statement</label>
+        <input id="conf-ref" placeholder="e.g. QHJ4KL2MPX" style="font-family:monospace;letter-spacing:.05em" />
+        <div class="helper">Check your M-Pesa Paybill portal or business SMS inbox. This creates an audit trail.</div>
+      </div>
+      <div class="field">
+        <label>Amount actually received on Paybill (KES)</label>
+        <input id="conf-amt" type="number" value="${r.grand_total}" step="0.01" />
+        <div class="helper">Confirm what actually arrived. If it matches the expected total, leave as-is.</div>
+      </div>
+      <div class="field"><label>Admin notes</label>
+        <textarea id="conf-notes" rows="2" placeholder="Note any discrepancies or actions taken..."></textarea>
+      </div>
+    `,
+    actions:[
+      { label:'Cancel', onClick: closeModal },
+      { label:'✓ Confirm received', cls:'btn-primary', onClick: async () => {
+        const ref = $('conf-ref').value.trim();
+        const actualAmt = Number($('conf-amt').value)||r.grand_total;
+        const notes = $('conf-notes').value.trim();
+        const upd = {
+          status:'confirmed',
+          confirmed_by: state.staff.id,
+          mpesa_reference: ref||null,
+          actual_amount_received: actualAmt,
+          admin_notes: notes||null,
+          confirmed_at: new Date().toISOString()
+        };
+        const { error } = await sb.from('pb_reconciliations').update(upd).eq('id',id);
+        if(error) return toast(error.message,'error');
+        Object.assign(r, upd);
+        audit('recon_confirm','pb_reconciliations',id,null,upd);
+        closeModal(); render(); toast('Remittance confirmed ✓','success');
+      }}
+    ]
+  });
+}
+
+function reconActions(ev, id){
+  const r = state.data.reconciliations.find(x=>x.id===id);
+  const isAdmin = state.staff.role==='admin';
+  showActMenu(ev, [
+    ...(isAdmin && r.status==='pending'
+      ? [{ label:'Confirm received', onClick: ()=>confirmRecon(id) }]
+      : []),
+    { label:'Delete', danger:true, onClick: ()=>confirmDialog('Delete this remittance record?', async()=>{
+      if(!(await ensureFreshToken())) return;
+      await sb.from('pb_reconciliations').delete().eq('id',id);
+      state.data.reconciliations = state.data.reconciliations.filter(x=>x.id!==id);
+      audit('delete','pb_reconciliations',id); render(); toast('Deleted','warn');
+    },{ title:'Delete remittance', danger:true }) }
+  ]);
+}
+
 
 /* =====================================================================
  * PAGE: ACCOUNTING
