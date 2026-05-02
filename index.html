@@ -676,6 +676,13 @@ function setupRealtime(){
   if(rtChan) sb.removeChannel(rtChan);
   rtChan = sb.channel('pb_changes')
     .on('postgres_changes', { event:'*', schema:'public' }, payload => {
+      // Fix 2: Live-sync settings changes so all connected users see new rates immediately
+      if(payload.table === 'pb_settings'){
+        state.settings = payload.new;
+        lsSet('settings', state.settings);
+        render();
+        return;
+      }
       const tbl = payload.table;
       const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_staff:'staff', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations' };
       const key = map[tbl]; if(!key) return;
@@ -2014,7 +2021,11 @@ async function submitMeeting(){
  * PAGE: ACTIVE LOANS
  * ===================================================================== */
 function pageLoans(){
-  let loans = state.data.loans;
+  // Fix 3: Loan officers should only see loans they are responsible for
+  const isAdmin = state.staff.role === 'admin';
+  let loans = isAdmin
+    ? state.data.loans
+    : state.data.loans.filter(l => l.officer_id === state.staff.id);
   const tab = state._loanTab || 'active';
   loans = loans.filter(l => tab==='all' ? true : l.status===tab);
 
@@ -2071,11 +2082,60 @@ function loanActions(ev, id){
   const isAdmin = state.staff.role==='admin';
   showActMenu(ev, [
     { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
-    ...(isAdmin && l.status==='active' ? [{ label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog('Mark this loan as defaulted? This action will be logged.', async()=>{
+    ...(isAdmin && l.status==='active' ? [
+      { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
+      { label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog('Mark this loan as defaulted? This action will be logged.', async()=>{
       await sb.from('pb_loans').update({ status:'defaulted' }).eq('id', id);
       l.status='defaulted'; audit('loan_default','pb_loans',id); render(); toast('Loan marked as defaulted','warn');
-    }, { title:'Mark as defaulted', danger:true }) }] : [])
+    }, { title:'Mark as defaulted', danger:true }) }
+    ] : [])
   ]);
+  ]);
+}
+function openLoanTransfer(l){
+  // Fix 4: Allow admins to reassign a loan to a different active officer
+  const officers = state.data.staff.filter(s => s.role === 'officer' && s.status === 'active');
+  if(!officers.length){
+    toast('No active loan officers found to transfer to.', 'warn');
+    return;
+  }
+  const currentOfficer = state.data.staff.find(s => s.id === l.officer_id);
+  modal({
+    title: 'Transfer Loan — ' + l.asset_name,
+    body: `
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+        Reassign this active loan to a different loan officer. The audit log will record the transfer.
+        Current officer: <b>${currentOfficer?.full_name || '—'}</b>
+      </div>
+      <div class="field">
+        <label>Transfer to officer *</label>
+        <select id="lt-officer">
+          <option value="">— Select officer —</option>
+          ${officers.map(o => `<option value="${o.id}" ${o.id === l.officer_id ? 'disabled' : ''}>${o.full_name}${o.id === l.officer_id ? ' (current)' : ''}</option>`).join('')}
+        </select>
+      </div>
+    `,
+    actions: [
+      {
+        label: 'Transfer', cls: 'btn-primary',
+        onClick: async () => {
+          const selectedId = document.getElementById('lt-officer')?.value;
+          if(!selectedId){ toast('Please select an officer.','warn'); return; }
+          if(selectedId === l.officer_id){ toast('That officer already owns this loan.','warn'); return; }
+          const newOfficer = officers.find(o => o.id === selectedId);
+          const { error } = await sb.from('pb_loans').update({ officer_id: selectedId }).eq('id', l.id);
+          if(error){ toast('Transfer failed: ' + error.message, 'error'); return; }
+          const oldOfficerId = l.officer_id;
+          l.officer_id = selectedId;
+          audit('loan_transfer', 'pb_loans', l.id, { officer_id: oldOfficerId }, { officer_id: selectedId, officer_name: newOfficer?.full_name });
+          closeModal();
+          render();
+          toast('Loan transferred to ' + (newOfficer?.full_name || 'new officer'), 'success');
+        }
+      },
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal }
+    ]
+  });
 }
 function showLoanSchedule(l){
   const sched = computeSchedule(Number(l.loan_value), Number(l.weekly_installment), 'flat', new Date(l.start_date));
@@ -2882,10 +2942,14 @@ function pageSettings(){
     e.preventDefault();
     const fd = new FormData(e.target); const row = Object.fromEntries(fd);
     ['savings_threshold','registration_fee','max_loan_weeks','monthly_interest_rate'].forEach(k=>row[k]=Number(row[k]));
-    const { error } = await sb.from('pb_settings').update(row).eq('id','main');
+    // Fix 1: Use upsert with the correct business-scoped ID so new businesses
+    // don't silently fail (update requires an existing row; upsert creates or updates).
+    const settingsId = state.staff?.business_id ? ('biz_' + state.staff.business_id) : 'main';
+    const { error } = await sb.from('pb_settings').upsert({ id: settingsId, ...row });
     if(error) return toast(error.message,'error');
-    state.settings = { ...state.settings, ...row, id:'main' };
-    audit('update_settings','pb_settings','main',null,row);
+    state.settings = { ...state.settings, ...row, id: settingsId };
+    lsSet('settings', state.settings);
+    audit('update_settings','pb_settings', settingsId, null, row);
     toast('Settings saved','success');
   });
 }
@@ -3300,7 +3364,13 @@ async function submitPurchase(){
  * ===================================================================== */
 function pageReconciliation(){
   const isAdmin = state.staff.role === 'admin';
-  const list = (state.data.reconciliations||[]).slice()
+  // Fix 3: Officers see only remittances for their assigned groups
+  const myGroupIds = isAdmin
+    ? null
+    : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+  const list = (state.data.reconciliations||[])
+    .filter(r => isAdmin || myGroupIds.includes(r.group_id))
+    .slice()
     .sort((a,b)=> new Date(b.meeting_date)-new Date(a.meeting_date));
   const pending = list.filter(r=>r.status==='pending');
 
