@@ -645,7 +645,13 @@ async function smartLoadAll(){
   state.loading = true; render();
   const tables = ['pb_groups','pb_members','pb_guarantors','pb_staff','pb_inventory','pb_loans','pb_orders','pb_savings','pb_repayments','pb_meetings','pb_suppliers','pb_purchases','pb_purchase_lines','pb_reconciliations'];
   const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_staff:'staff', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations' };
-  const results = await Promise.all(tables.map(t => sb.from(t).select('*').limit(5000)));
+  const results = await Promise.all(tables.map(t => {
+    let query = sb.from(t).select('*').limit(5000);
+    if (state.staff && state.staff.business_id) {
+      query = query.eq('business_id', state.staff.business_id);
+    }
+    return query;
+  }));
   let jwtBroken = false;
   results.forEach((r,i) => {
     if(!r.error){
@@ -700,6 +706,7 @@ function setupRealtime(){
 async function audit(action, entity=null, entity_id=null, oldV=null, newV=null){
   if(!state.staff) return;
   const row = {
+    business_id: state.staff.business_id || null,
     staff_id: state.staff.id, staff_name: state.staff.full_name,
     action, entity, entity_id: entity_id ? String(entity_id) : null,
     old_value: oldV, new_value: newV
@@ -1359,7 +1366,7 @@ function pageGroups(){
       <table class="tbl">
         <thead><tr>
           <th>#</th><th>Name</th><th>Meeting day</th><th>Chairman</th>
-          <th>Officer</th><th class="num">Members</th><th class="num">Savings</th>
+          <th>Treasurer</th><th>Officer</th><th class="num">Members</th><th class="num">Savings</th>
           <th>Status</th><th></th>
         </tr></thead>
         <tbody>
@@ -1371,6 +1378,7 @@ function pageGroups(){
               <td><b>${g.name}</b></td>
               <td>${g.meeting_day||'—'} ${g.meeting_time?'· '+g.meeting_time:''}</td>
               <td>${g.chairman_name||'—'}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
+              <td>${g.treasurer_name||'—'}<div class="muted" style="font-size:11px">${g.treasurer_phone||''}</div></td>
               <td>${off?.full_name||'—'}</td>
               <td class="num">${mc}</td>
               <td class="num">${KES(groupSavingsTotal(g.id))}</td>
@@ -1422,6 +1430,10 @@ function openGroupForm(g=null){
         <div class="field"><label>Chairman name</label><input name="chairman_name" value="${g?.chairman_name||''}" /></div>
         <div class="field"><label>Chairman phone</label><input name="chairman_phone" value="${g?.chairman_phone||''}" /></div>
       </div>
+      <div class="grid-2">
+        <div class="field"><label>Treasurer name</label><input name="treasurer_name" value="${g?.treasurer_name||''}" /></div>
+        <div class="field"><label>Treasurer phone</label><input name="treasurer_phone" value="${g?.treasurer_phone||''}" /></div>
+      </div>
       <div class="field"><label>Assigned loan officer</label>
         <select name="officer_id">
           <option value="">— Unassigned —</option>
@@ -1448,7 +1460,7 @@ function openGroupForm(g=null){
           if(error) return toast(error.message,'error');
           Object.assign(g, row); audit('update','pb_groups',g.id,null,row);
         } else {
-          const { data, error } = await sb.from('pb_groups').insert(row).select().single();
+          const { data, error } = await sb.from('pb_groups').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.groups.unshift(data); audit('create','pb_groups',data.id,null,data);
         }
@@ -1524,7 +1536,7 @@ function pageMembers(){
       <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._membersPage=${_page+1};pageMembers()">Next →</button>
     </div>` : ''}
   `;
-  $('mem-search').addEventListener('input', e => { state._memberSearch = e.target.value; state._membersPage=0; pageMembers(); });
+  $('mem-search').addEventListener('input', e => { state._memberSearch = e.target.value; state._membersPage=0; pageMembers(); setTimeout(()=>{ const el=$('mem-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },0); });
   $('mem-group').addEventListener('change', e => { state.viewCtx = { groupId: e.target.value }; state._membersPage=0; pageMembers(); });
 }
 function memberActions(ev, id){
@@ -1709,6 +1721,7 @@ async function submitWizard(){
   const officer_id = d.officer_id || g?.officer_id || null;
 
   const memberRow = {
+    business_id: state.staff.business_id || null,
     group_id: d.group_id, full_name: d.full_name, national_id: d.national_id,
     date_of_birth: d.date_of_birth || null, gender: d.gender, phone: d.phone, email: d.email || null,
     address: d.address || null, nearest_town: d.nearest_town || null, occupation: d.occupation || null,
@@ -1720,6 +1733,7 @@ async function submitWizard(){
   if(error) return toast(error.message, 'error');
 
   const guars = d.guarantors.filter(x=>x.full_name && x.national_id).map((x,i) => ({
+    business_id: state.staff.business_id || null,
     member_id: created.id, full_name: x.full_name, national_id: x.national_id,
     phone: normalisePhone(x.phone), location: x.location || null,
     relationship: x.relationship || null, position: i+1
@@ -2094,6 +2108,7 @@ async function submitMeeting(){
   if(existing){ meetingId = existing.id; }
   else {
     const { data, error } = await sb.from('pb_meetings').insert({
+      business_id: state.staff.business_id || null,
       group_id: m.groupId, meeting_date: m.date, recorded_by: state.staff.id
     }).select().single();
     if(error) return toast(error.message, 'error');
@@ -2107,7 +2122,7 @@ async function submitMeeting(){
     const sav = Number(e.savings)||0;
 
     if(sav>0){
-      savRows.push({ member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, recorded_by: state.staff.id, notes: e.notes||null });
+      savRows.push({ business_id: state.staff.business_id || null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, recorded_by: state.staff.id, notes: e.notes||null });
     }
 
     if (e.repayments) {
@@ -2118,7 +2133,7 @@ async function submitMeeting(){
           const ir = Number(ln.total_payable) ? (Number(ln.total_payable)-Number(ln.loan_value))/Number(ln.total_payable) : 0;
           const interest = +(rep*ir).toFixed(2);
           const principal = +(rep-interest).toFixed(2);
-          repRows.push({ loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id });
+          repRows.push({ business_id: state.staff.business_id || null, loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id });
         }
       }
     }
@@ -2610,7 +2625,7 @@ function pageInventory(){
       <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._invPage=${_page+1};pageInventory()">Next →</button>
     </div>` : ''}
   `;
-  $('inv-search').addEventListener('input', e=>{ state._invSearch=e.target.value; state._invPage=0; pageInventory(); });
+  $('inv-search').addEventListener('input', e=>{ state._invSearch=e.target.value; state._invPage=0; pageInventory(); setTimeout(()=>{ const el=$('inv-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },0); });
 }
 
 function downloadInventoryTemplate(){
@@ -2699,7 +2714,7 @@ async function importInventory(input){
             for(const row of mapped){
               const exists = state.data.inventory.find(a=>a.name.toLowerCase()===row.name.toLowerCase());
               if(exists){ skipped++; continue; }
-              const { data, error } = await sb.from('pb_inventory').insert(row).select().single();
+              const { data, error } = await sb.from('pb_inventory').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
               if(error){ failed++; console.warn('Import failed for',row.name,error.message); }
               else { state.data.inventory.push(data); added++; }
             }
@@ -2763,7 +2778,7 @@ function openAssetForm(a=null){
           if(error) return toast(error.message,'error');
           Object.assign(a, row); audit('update','pb_inventory',a.id);
         } else {
-          const { data, error } = await sb.from('pb_inventory').insert(row).select().single();
+          const { data, error } = await sb.from('pb_inventory').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.inventory.unshift(data); audit('create','pb_inventory',data.id);
         }
@@ -2901,6 +2916,7 @@ function openOrderForm(){
           if(!confirm(`This member has not yet reached the savings eligibility threshold of ${KES(state.settings?.savings_threshold||900)}. Submit order anyway?`)) return;
         }
         const ins = {
+          business_id: state.staff.business_id || null,
           member_id: member.id, group_id: member.group_id, asset_id: asset.id, asset_name: asset.name,
           quantity: Number($('ord-qty').value)||1, ordered_on: $('ord-date').value, status:'pending',
           recorded_by: state.staff.id, notes: $('ord-notes').value||null
@@ -2994,6 +3010,7 @@ function approveOrder(o){
         const r = computeSchedule(principal, weekly, 'flat', start);
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
         const loan = {
+          business_id: state.staff.business_id || null,
           member_id: member.id, group_id: member.group_id, officer_id: state.staff.id,
           order_id: o.id, asset_id: asset.id, asset_name: asset.name, asset_quantity: o.quantity,
           loan_value: principal, weekly_installment: weekly, total_payable: r.totalPayable,
@@ -3396,7 +3413,7 @@ function openSupplierForm(s=null){
           if(error) return toast(error.message,'error');
           Object.assign(s, row); audit('update','pb_suppliers',s.id);
         } else {
-          const { data, error } = await sb.from('pb_suppliers').insert(row).select().single();
+          const { data, error } = await sb.from('pb_suppliers').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.suppliers.unshift(data); audit('create','pb_suppliers',data.id);
         }
@@ -3590,6 +3607,7 @@ async function submitPurchase(){
   const total = override > 0 ? override : auto;
   const sup = state.data.suppliers.find(x=>x.id===row.supplier_id);
   const purchase = {
+    business_id: state.staff.business_id || null,
     supplier_id: row.supplier_id, supplier_name: sup?.name||'',
     invoice_no: row.invoice_no||null, received_on: row.received_on,
     total_cost: total, notes: row.notes||null,
@@ -3600,6 +3618,7 @@ async function submitPurchase(){
   if(error) return toast('Save failed: '+error.message+' — check pb_purchases table columns.','error');
   if(validLines.length){
     const lineRows = validLines.map(l => ({
+      business_id: state.staff.business_id || null,
       purchase_id: created.id, asset_id: l.asset_id||null, asset_name: l.asset_name,
       quantity: Number(l.quantity), cost_per_unit: Number(l.cost_per_unit)||0,
       subtotal: Number(l.subtotal)||Number(l.quantity)*Number(l.cost_per_unit||0),
@@ -3621,6 +3640,7 @@ async function submitPurchase(){
     if(l.isNew || !l.asset_id){
       // Brand new asset — create inventory record
       const newRow = {
+        business_id: state.staff.business_id || null,
         name: l.asset_name, category:'Other', stock: qty,
         buying_price: costPerUnit,
         loan_price: Math.round(costPerUnit*1.15*100)/100,
@@ -3836,6 +3856,7 @@ function openReconForm(){
         if(!row.amount_matched) return toast('Please confirm if the SMS amount matches.','error');
         // Build insert with only known columns — prevents schema cache errors
         const insert = {
+          business_id: state.staff.business_id || null,
           group_id: row.group_id,
           meeting_date: row.meeting_date,
           total_savings: Number(row.total_savings)||0,
@@ -4139,6 +4160,7 @@ function exportAccountingReport(){
   }
   if(!navigator.onLine) setBanner('You are offline. Cached data shown. Changes will be queued.');
 })();
+
 </script>
 </body>
 </html>
