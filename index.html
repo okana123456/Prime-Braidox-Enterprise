@@ -1040,6 +1040,8 @@ function closeActMenu(){ $('actmenu-root').innerHTML = ''; }
  * ===================================================================== */
 let _dashFilter = 'today';
 let _dashCustomStart = '', _dashCustomEnd = '';
+let _arrearsFilter = 'all'; // date range filter for arrears page and dashboard
+let _arrearsCustomStart = '', _arrearsCustomEnd = '';
 
 function dashDateRange(){
   const now = new Date();
@@ -1066,6 +1068,35 @@ function dashDateRange(){
     return { start: _dashCustomStart||today, end: _dashCustomEnd||today };
   }
   return { start: today, end: today };
+}
+
+function arrearDateRange(){
+  // Returns a date range for filtering loan start_dates in the arrears view.
+  // 'all' means no restriction (show all active loans regardless of start date).
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const today = iso(now);
+  if(_arrearsFilter === 'all') return { start: '2000-01-01', end: '2999-12-31' };
+  if(_arrearsFilter === 'week'){
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_arrearsFilter === 'month'){
+    const d = new Date(now); d.setMonth(d.getMonth()-1);
+    return { start: iso(d), end: today };
+  }
+  if(_arrearsFilter === '3months'){
+    const d = new Date(now); d.setMonth(d.getMonth()-3);
+    return { start: iso(d), end: today };
+  }
+  if(_arrearsFilter === '6months'){
+    const d = new Date(now); d.setMonth(d.getMonth()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_arrearsFilter === 'custom'){
+    return { start: _arrearsCustomStart||today, end: _arrearsCustomEnd||today };
+  }
+  return { start: '2000-01-01', end: '2999-12-31' };
 }
 
 function pageDashboard(){
@@ -1136,10 +1167,17 @@ function pageDashboard(){
         </div>
       </div>
       <div class="card" style="min-width:0">
-        <div class="card-head">
+        <div class="card-head" style="flex-wrap:wrap;gap:8px">
           <h3>Due & In Arrears</h3>
-          <div style="display:flex;align-items:center;gap:8px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <div class="sub" id="dash-arr-sub"></div>
+            <select id="dash-arr-range" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="dashArrFilter()">
+              <option value="all">All Time</option>
+              <option value="week">Last 7 Days</option>
+              <option value="month">Last Month</option>
+              <option value="3months">Last 3 Months</option>
+              <option value="6months">Last 6 Months</option>
+            </select>
             <select id="dash-arr-officer" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="dashArrFilter()">
               <option value="">All Officers</option>
               ${officers.map(o=>`<option value="${o.id}">${o.full_name}</option>`).join('')}
@@ -1179,17 +1217,26 @@ function pageDashboard(){
 }
 
 function dashArrFilter(){
-  const offSel = document.getElementById('dash-arr-officer');
-  const body   = document.getElementById('dash-arr-body');
-  const sub    = document.getElementById('dash-arr-sub');
+  const offSel   = document.getElementById('dash-arr-officer');
+  const rangeSel = document.getElementById('dash-arr-range');
+  const body     = document.getElementById('dash-arr-body');
+  const sub      = document.getElementById('dash-arr-sub');
   if(!body) return;
 
-  const offVal    = offSel ? offSel.value : '';
+  const offVal   = offSel   ? offSel.value   : '';
+  const rangeVal = rangeSel ? rangeSel.value : 'all';
   const today     = todayISO();
   const msPerWeek = 7 * 24 * 3600 * 1000;
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  let drStart = '2000-01-01', drEnd = '2999-12-31';
+  if(rangeVal === 'week')    { const d=new Date(now); d.setDate(d.getDate()-6); drStart=iso(d); drEnd=today; }
+  if(rangeVal === 'month')   { const d=new Date(now); d.setMonth(d.getMonth()-1); drStart=iso(d); drEnd=today; }
+  if(rangeVal === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3); drStart=iso(d); drEnd=today; }
+  if(rangeVal === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6); drStart=iso(d); drEnd=today; }
   const nextWeekISO = new Date(new Date(today).getTime() + 7*24*3600*1000).toISOString().slice(0,10);
 
-  const activeLoans = state.data.loans.filter(l => l.status === 'active');
+  const activeLoans = state.data.loans.filter(l => l.status === 'active' && l.start_date >= drStart && l.start_date <= drEnd);
   const rows = activeLoans.map(l => {
     const paid      = loanPaid(l.id);
     const startDate = new Date(l.start_date);
@@ -2107,16 +2154,18 @@ async function submitMeeting(){
 function pageArrears(){
   const isAdmin = state.staff.role === 'admin';
   const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+  const { start: drStart, end: drEnd } = arrearDateRange();
 
-  // Get active loans matching visibility rules
+  // Active loans matching visibility rules AND start_date within selected range
   const activeLoans = state.data.loans.filter(l =>
-    l.status === 'active' && (isAdmin || myGroupIds.includes(l.group_id) || l.officer_id === state.staff.id)
+    l.status === 'active'
+    && l.start_date >= drStart && l.start_date <= drEnd
+    && (isAdmin || myGroupIds.includes(l.group_id) || l.officer_id === state.staff.id)
   );
 
   const today = todayISO();
-  const nextWeekObj = new Date(today);
-  nextWeekObj.setDate(nextWeekObj.getDate() + 7);
-  const nextWeekISO = nextWeekObj.toISOString().slice(0,10);
+  const msPerWeek = 7 * 24 * 3600 * 1000;
+  const nextWeekISO = new Date(new Date(today).getTime() + 7*24*3600*1000).toISOString().slice(0,10);
 
   const report = activeLoans.map(l => {
     const mem = state.data.members.find(x => x.id === l.member_id);
@@ -2124,26 +2173,15 @@ function pageArrears(){
     const off = state.data.staff.find(x => x.id === l.officer_id);
     const paid = loanPaid(l.id);
 
-    // FIX: Use actual weekly_installment from the loan record rather than
-    // recomputing via computeSchedule (which recalculates with current settings
-    // and produces a different installment, causing arrears to always show 0).
-    // Instead we count how many weekly slots have elapsed since start_date and
-    // multiply by the stored weekly_installment to get the expected amount paid.
-    const startDate  = new Date(l.start_date);
-    const msPerWeek  = 7 * 24 * 3600 * 1000;
+    const startDate = new Date(l.start_date);
     const weeksElapsed = Math.max(0, Math.floor((new Date(today) - startDate) / msPerWeek));
     const weekly = Number(l.weekly_installment) || 0;
-    const totalPayable = Number(l.total_payable) || 0;
-
-    // Cap expected at total_payable so completed loans don't show false arrears
-    const expectedPaid = Math.min(weeksElapsed * weekly, totalPayable);
+    const expectedPaid = Math.min(weeksElapsed * weekly, Number(l.total_payable) || 0);
     const arrears = Math.max(0, expectedPaid - paid);
 
-    // Next due date: find the first future week slot from start_date
     let nextDueDate = null;
     for (let w = 1; w <= 1040; w++) {
-      const d = new Date(startDate);
-      d.setDate(d.getDate() + 7 * w);
+      const d = new Date(startDate); d.setDate(d.getDate() + 7 * w);
       const ds = d.toISOString().slice(0,10);
       if (ds > today) { nextDueDate = ds; break; }
     }
@@ -2151,33 +2189,46 @@ function pageArrears(){
     let category = 'ontrack';
     if (arrears > 0) category = 'arrears';
     else if (nextDueDate === today) category = 'duetoday';
-    else if (nextDueDate && nextDueDate > today && nextDueDate <= nextWeekISO) category = 'duethisweek';
+    else if (nextDueDate && nextDueDate <= nextWeekISO) category = 'duethisweek';
 
     return { loan: l, member: mem, group: g, officer: off, paid, arrears, nextDueDate, expectedInstallment: weekly, category };
   });
 
   const tab = state._arrearsTab || 'arrears';
-  // Officer filter (admin only)
   const offFilter = state._arrearsOfficerFilter || '';
   let filtered = report.filter(r => tab === 'all' ? true : r.category === tab);
   if (isAdmin && offFilter) filtered = filtered.filter(r => r.loan.officer_id === offFilter);
 
-  // Officers who have at least one active loan (for dropdown)
   const officersWithLoans = isAdmin
     ? state.data.staff.filter(s => s.role === 'officer' && report.some(r => r.loan.officer_id === s.id))
     : [];
+
+  const filterBtns = [
+    ['all','All Time'],['week','Last 7 Days'],['month','Last Month'],['3months','Last 3 Months'],['6months','Last 6 Months'],['custom','Custom']
+  ];
 
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Due & Arrears</h1><div class="desc">Track missed payments and upcoming collections.</div></div>
     </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      <span style="font-size:12px;color:var(--text-muted);margin-right:2px">Loan start date:</span>
+      ${filterBtns.map(([k,l]) => `<button class="btn btn-sm ${_arrearsFilter===k?'btn-primary':'btn-outline'}" onclick="_arrearsFilter='${k}';pageArrears()">${l}</button>`).join('')}
+      ${_arrearsFilter==='custom' ? `
+        <input type="date" value="${_arrearsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_arrearsCustomStart=this.value;pageArrears()" />
+        <span class="muted" style="font-size:12px">to</span>
+        <input type="date" value="${_arrearsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_arrearsCustomEnd=this.value;pageArrears()" />
+      ` : ''}
+    </div>
+
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;align-items:flex-end">
       <div class="tabs" style="margin-bottom:0;border-bottom:none">
         ${[
           ['arrears',     `In Arrears (${report.filter(r=>r.category==='arrears').length})`],
           ['duetoday',    `Due Today (${report.filter(r=>r.category==='duetoday').length})`],
           ['duethisweek', `Due Next 7 Days (${report.filter(r=>r.category==='duethisweek').length})`],
-          ['all',         'All Active']
+          ['all',         `All Active (${report.length})`]
         ].map(([k, label]) => `<button class="${tab===k?'active':''}" onclick="state._arrearsTab='${k}';pageArrears()">${label}</button>`).join('')}
       </div>
       ${isAdmin && officersWithLoans.length ? `
@@ -2186,11 +2237,12 @@ function pageArrears(){
           ${officersWithLoans.map(o=>`<option value="${o.id}" ${offFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
         </select>` : ''}
     </div>
+
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
           <th>Member</th><th>Group</th>${isAdmin?'<th>Officer</th>':''}
-          <th>Asset</th><th class="num">Arrears (KES)</th><th class="num">Weekly Inst.</th><th>Next Due</th><th>Status</th>
+          <th>Asset</th><th>Start Date</th><th class="num">Arrears (KES)</th><th class="num">Weekly Inst.</th><th>Next Due</th><th>Status</th>
         </tr></thead>
         <tbody>
           ${filtered.length ? filtered.map(r => `<tr>
@@ -2198,11 +2250,12 @@ function pageArrears(){
             <td>${r.group?.name||'—'}</td>
             ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||'—'}</td>` : ''}
             <td>${r.loan.asset_name}</td>
+            <td>${fmtDate(r.loan.start_date)}</td>
             <td class="num"><b style="color:${r.arrears>0?'var(--danger)':'var(--success)'}">${KES(r.arrears)}</b></td>
             <td class="num">${KES(r.expectedInstallment)}</td>
             <td>${fmtDate(r.nextDueDate)}</td>
             <td><span class="badge ${r.arrears>0?'b-red':r.category==='duetoday'?'b-yellow':'b-green'}">${r.arrears>0?'In Arrears':r.category==='duetoday'?'Due Today':'On Track'}</span></td>
-          </tr>`).join('') : `<tr><td colspan="${isAdmin?8:7}"><div class="empty"><h4>No records found</h4><p>No loans match this filter.</p></div></td></tr>`}
+          </tr>`).join('') : `<tr><td colspan="${isAdmin?9:8}"><div class="empty"><h4>No records found</h4><p>No loans match the current filters.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2361,15 +2414,15 @@ function openLoanRestructure(l){
         const oldWeekly = l.weekly_installment;
         const upd = {
           weekly_installment: newWeekly,
-          expected_end_date: expectedEnd,
-          notes: (l.notes || '') + ' [Restructured on ' + todayISO() + ': Weekly changed to ' + newWeekly + '. Reason: ' + reason + ']'
+          expected_end_date: expectedEnd
         };
 
         const { error } = await sb.from('pb_loans').update(upd).eq('id', l.id);
         if(error) return toast('Failed to update loan: ' + error.message, 'error');
 
         Object.assign(l, upd);
-        audit('loan_restructure', 'pb_loans', l.id, { old_weekly: oldWeekly }, { new_weekly: newWeekly, reason });
+        // Restructure reason is stored in the audit log (pb_loans has no notes column)
+        audit('loan_restructure', 'pb_loans', l.id, { old_weekly: oldWeekly }, { new_weekly: newWeekly, expected_end_date: expectedEnd, reason });
         closeModal();
         render();
         toast('Loan restructured successfully.', 'success');
