@@ -2084,53 +2084,48 @@ function loanActions(ev, id){
     { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
     ...(isAdmin && l.status==='active' ? [
       { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
-      { label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog('Mark this loan as defaulted? This action will be logged.', async()=>{
-      await sb.from('pb_loans').update({ status:'defaulted' }).eq('id', id);
-      l.status='defaulted'; audit('loan_default','pb_loans',id); render(); toast('Loan marked as defaulted','warn');
-    }, { title:'Mark as defaulted', danger:true }) }
+      { label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog(
+          'Mark this loan as defaulted? This action will be logged.',
+          async()=>{
+            await sb.from('pb_loans').update({ status:'defaulted' }).eq('id', id);
+            l.status='defaulted'; audit('loan_default','pb_loans',id); render();
+            toast('Loan marked as defaulted','warn');
+          },
+          { title:'Mark as defaulted', danger:true }
+        )
+      }
     ] : [])
-  ]);
   ]);
 }
 function openLoanTransfer(l){
-  // Fix 4: Allow admins to reassign a loan to a different active officer
   const officers = state.data.staff.filter(s => s.role === 'officer' && s.status === 'active');
-  if(!officers.length){
-    toast('No active loan officers found to transfer to.', 'warn');
-    return;
-  }
+  if(!officers.length){ toast('No active loan officers found to transfer to.','warn'); return; }
   const currentOfficer = state.data.staff.find(s => s.id === l.officer_id);
+  const optionsHtml = officers.map(function(o){
+    const dis = o.id === l.officer_id ? ' disabled' : '';
+    const cur = o.id === l.officer_id ? ' (current)' : '';
+    return '<option value="' + o.id + '"' + dis + '>' + o.full_name + cur + '</option>';
+  }).join('');
   modal({
-    title: 'Transfer Loan — ' + l.asset_name,
-    body: `
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
-        Reassign this active loan to a different loan officer. The audit log will record the transfer.
-        Current officer: <b>${currentOfficer?.full_name || '—'}</b>
-      </div>
-      <div class="field">
-        <label>Transfer to officer *</label>
-        <select id="lt-officer">
-          <option value="">— Select officer —</option>
-          ${officers.map(o => `<option value="${o.id}" ${o.id === l.officer_id ? 'disabled' : ''}>${o.full_name}${o.id === l.officer_id ? ' (current)' : ''}</option>`).join('')}
-        </select>
-      </div>
-    `,
+    title: 'Transfer Loan: ' + l.asset_name,
+    body: '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Reassign this loan to a different officer. Current officer: <b>' + (currentOfficer ? currentOfficer.full_name : 'Unknown') + '</b></div>'
+        + '<div class="field"><label>Transfer to officer *</label>'
+        + '<select id="lt-officer"><option value="">-- Select officer --</option>' + optionsHtml + '</select></div>',
     actions: [
       {
         label: 'Transfer', cls: 'btn-primary',
-        onClick: async () => {
-          const selectedId = document.getElementById('lt-officer')?.value;
+        onClick: async function(){
+          const selectedId = document.getElementById('lt-officer') ? document.getElementById('lt-officer').value : '';
           if(!selectedId){ toast('Please select an officer.','warn'); return; }
           if(selectedId === l.officer_id){ toast('That officer already owns this loan.','warn'); return; }
-          const newOfficer = officers.find(o => o.id === selectedId);
-          const { error } = await sb.from('pb_loans').update({ officer_id: selectedId }).eq('id', l.id);
-          if(error){ toast('Transfer failed: ' + error.message, 'error'); return; }
+          const newOfficer = officers.find(function(o){ return o.id === selectedId; });
+          const res = await sb.from('pb_loans').update({ officer_id: selectedId }).eq('id', l.id);
+          if(res.error){ toast('Transfer failed: ' + res.error.message,'error'); return; }
           const oldOfficerId = l.officer_id;
           l.officer_id = selectedId;
-          audit('loan_transfer', 'pb_loans', l.id, { officer_id: oldOfficerId }, { officer_id: selectedId, officer_name: newOfficer?.full_name });
-          closeModal();
-          render();
-          toast('Loan transferred to ' + (newOfficer?.full_name || 'new officer'), 'success');
+          audit('loan_transfer','pb_loans',l.id,{ officer_id: oldOfficerId },{ officer_id: selectedId, officer_name: newOfficer ? newOfficer.full_name : '' });
+          closeModal(); render();
+          toast('Loan transferred to ' + (newOfficer ? newOfficer.full_name : 'new officer'),'success');
         }
       },
       { label: 'Cancel', cls: 'btn-outline', onClick: closeModal }
