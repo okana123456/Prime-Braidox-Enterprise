@@ -861,6 +861,7 @@ function navItems(){
     { k:'members', label:'Members', show:true, icon:memberIcon() },
     { k:'meeting', label:'Meeting Recorder', show:isAdmin || p.can_record_savings || p.can_record_repayments, icon:meetingIcon() },
     { k:'loans', label:'Active Loans', show:true, icon:loanIcon() },
+    { k:'arrears', label:'Due & Arrears', show:true, icon: ic('<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>') },
     { k:'calculator', label:'Loan Calculator', show:true, icon:calcIcon() },
     { k:'inventory', label:'Inventory', show:true, icon:invIcon() },
     { k:'suppliers', label:'Suppliers', show:isAdmin || p.can_manage_suppliers, icon:supplierIcon() },
@@ -954,7 +955,7 @@ function toggleSidebar(force){
 function renderPage(){
   const fns = {
     dashboard: pageDashboard, groups: pageGroups, members: pageMembers,
-    meeting: pageMeeting, loans: pageLoans, calculator: pageCalculator,
+    meeting: pageMeeting, loans: pageLoans, arrears: pageArrears, calculator: pageCalculator,
     inventory: pageInventory, suppliers: pageSuppliers, purchases: pagePurchases,
     orders: pageOrders, reconciliation: pageReconciliation, reports: pageReports, accounting: pageAccounting,
     staff: pageStaff, settings: pageSettings, audit: pageAudit,
@@ -2020,6 +2021,85 @@ async function submitMeeting(){
 /* =====================================================================
  * PAGE: ACTIVE LOANS
  * ===================================================================== */
+function pageArrears(){
+  const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+
+  // Get active loans matching visibility rules
+  const activeLoans = state.data.loans.filter(l =>
+    l.status === 'active' && (isAdmin || myGroupIds.includes(l.group_id) || l.officer_id === state.staff.id)
+  );
+
+  const today = todayISO();
+  const todayObj = new Date(today);
+  const nextWeekObj = new Date(today);
+  nextWeekObj.setDate(nextWeekObj.getDate() + 7);
+  const nextWeekISO = nextWeekObj.toISOString().slice(0,10);
+
+  const report = activeLoans.map(l => {
+    const m = state.data.members.find(x => x.id === l.member_id);
+    const g = state.data.groups.find(x => x.id === l.group_id);
+    const off = state.data.staff.find(x => x.id === l.officer_id);
+    const paid = loanPaid(l.id);
+
+    // Calculate schedule to find expected payments
+    const schedule = computeSchedule(Number(l.loan_value), Number(l.weekly_installment), 'flat', new Date(l.start_date));
+
+    // Find all past due installments
+    const pastRows = schedule.rows.filter(r => r.due.toISOString().slice(0,10) <= today);
+    const expectedPaid = pastRows.reduce((sum, r) => sum + r.installment, 0);
+    const arrears = Math.max(0, expectedPaid - paid);
+
+    // Find the next upcoming installment
+    const futureRows = schedule.rows.filter(r => r.due.toISOString().slice(0,10) > today);
+    const nextDueRow = futureRows.length ? futureRows[0] : null;
+    const nextDueDate = nextDueRow ? nextDueRow.due.toISOString().slice(0,10) : null;
+
+    let category = 'ontrack';
+    if (arrears > 0) category = 'arrears';
+    else if (nextDueDate === today) category = 'duetoday';
+    else if (nextDueDate > today && nextDueDate <= nextWeekISO) category = 'duethisweek';
+
+    return { loan: l, member: m, group: g, officer: off, paid, arrears, nextDueDate, expectedInstallment: Number(l.weekly_installment), category };
+  });
+
+  const tab = state._arrearsTab || 'arrears';
+  const filtered = report.filter(r => tab === 'all' ? true : r.category === tab);
+
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>Due & Arrears</h1><div class="desc">Track missed payments and upcoming collections.</div></div>
+    </div>
+    <div class="tabs">
+      ${[
+        ['arrears', `In Arrears (${report.filter(r=>r.category==='arrears').length})`],
+        ['duetoday', `Due Today (${report.filter(r=>r.category==='duetoday').length})`],
+        ['duethisweek', `Due Next 7 Days (${report.filter(r=>r.category==='duethisweek').length})`],
+        ['all', 'All Active']
+      ].map(([k, label]) => `<button class="${tab===k?'active':''}" onclick="state._arrearsTab='${k}';pageArrears()">${label}</button>`).join('')}
+    </div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Member</th><th>Group</th>${isAdmin?'<th>Officer</th>':''}
+          <th>Asset</th><th class="num">Arrears Amount</th><th class="num">Weekly Inst.</th><th>Next Due</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${filtered.map(r => `<tr>
+            <td><b>${r.member?.full_name||'—'}</b><div class="muted" style="font-size:11px">${r.member?.phone||''}</div></td>
+            <td>${r.group?.name||'—'}</td>
+            ${isAdmin ? `<td>${r.officer?.full_name||'—'}</td>` : ''}
+            <td>${r.loan.asset_name}</td>
+            <td class="num"><b style="color:${r.arrears>0?'var(--danger)':'inherit'}">${KES(r.arrears)}</b></td>
+            <td class="num">${KES(r.expectedInstallment)}</td>
+            <td>${fmtDate(r.nextDueDate)}</td>
+            <td><span class="badge ${r.arrears>0?'b-red':r.category==='duetoday'?'b-yellow':'b-green'}">${r.arrears>0?'In Arrears':r.category==='duetoday'?'Due Today':'On Track'}</span></td>
+          </tr>`).join('') || `<tr><td colspan="${isAdmin?8:7}"><div class="empty"><h4>No records found</h4></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
 function pageLoans(){
   const isAdmin = state.staff.role === 'admin';
   const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
@@ -2031,49 +2111,52 @@ function pageLoans(){
   const tab = state._loanTab || 'active';
   loans = loans.filter(l => tab==='all' ? true : l.status===tab);
 
+  if (isAdmin && state._loanOfficerFilter) {
+    loans = loans.filter(l => l.officer_id === state._loanOfficerFilter);
+  }
+
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Loan portfolio</h1><div class="desc">Asset-backed loans across all members.</div></div>
     </div>
-    <div class="tabs">
-      ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
+    <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
+      <div class="tabs" style="margin-bottom:0; border-bottom:none;">
+        ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
+      </div>
+      ${isAdmin ? `
+        <select style="max-width:200px" onchange="state._loanOfficerFilter=this.value; pageLoans()">
+          <option value="">All Officers</option>
+          ${state.data.staff.filter(s=>s.role==='officer').map(o=>`<option value="${o.id}" ${state._loanOfficerFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
+        </select>
+      ` : ''}
     </div>
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>Member</th><th>Asset</th><th class="num">Loan value</th>
+          <th>Member</th><th>Asset</th>${isAdmin?'<th>Officer</th>':''}<th>Start Date</th><th class="num">Loan value</th>
           <th class="num">Weekly</th><th class="num">Paid</th><th class="num">Outstanding</th>
-          <th>Weeks left</th><th>Status</th><th></th>
+          <th>Status</th><th></th>
         </tr></thead>
         <tbody>
           ${loans.map(l => {
             const m = state.data.members.find(x=>x.id===l.member_id);
+            const off = state.data.staff.find(x=>x.id===l.officer_id);
             const paid = loanPaid(l.id);
             const out = Number(l.total_payable)-paid;
-            const wks = Math.max(0, Math.ceil(out / Number(l.weekly_installment||1)));
             const bcls = l.status==='completed'?'b-grey':l.status==='defaulted'?'b-red':'b-blue';
-            // weeks behind = expected paid (by elapsed weeks) − actual paid, divided by weekly
-            const weeksElapsed = Math.max(0, Math.floor((Date.now() - new Date(l.start_date).getTime())/(7*86400000)));
-            const expected = weeksElapsed * Number(l.weekly_installment||0);
-            const behind = Math.max(0, Math.ceil((expected - paid) / Number(l.weekly_installment||1)));
-            let rowStyle = '';
-            if(l.status==='completed') rowStyle = 'background:var(--surface-2);color:var(--text-muted)';
-            else if(l.status==='defaulted') rowStyle = 'background:var(--danger-50)';
-            else if(behind >= 2) rowStyle = 'background:var(--danger-50)';
-            else if(behind === 1) rowStyle = 'background:var(--warning-50)';
-            else rowStyle = 'background:var(--success-50)';
-            return `<tr style="${rowStyle}">
+            return `<tr style="${l.status==='completed'?'background:var(--surface-2);color:var(--text-muted)':l.status==='defaulted'?'background:var(--danger-50)':''}">
               <td><b>${m?.full_name||'—'}</b></td>
               <td>${l.asset_name}</td>
+              ${isAdmin ? `<td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'—'}</td>` : ''}
+              <td>${fmtDate(l.start_date)}</td>
               <td class="num">${KES(l.loan_value)}</td>
               <td class="num">${KES(l.weekly_installment)}</td>
               <td class="num">${KES(paid)}</td>
               <td class="num">${KES(out)}</td>
-              <td>${l.status==='active'?wks:'—'}${behind>0&&l.status==='active'?` <span class="badge b-red" style="margin-left:4px">${behind}w behind</span>`:''}</td>
               <td><span class="badge ${bcls}">${l.status}</span></td>
               <td><button class="act-btn" onclick="loanActions(event,'${l.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="9"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="${isAdmin?10:9}"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
