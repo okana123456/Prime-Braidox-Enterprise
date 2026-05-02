@@ -1136,29 +1136,21 @@ function pageDashboard(){
         </div>
       </div>
       <div class="card" style="min-width:0">
-        <div class="card-head"><h3>Active loans</h3><div class="sub">${activeLoans.length} loans</div></div>
+        <div class="card-head">
+          <h3>Due & In Arrears</h3>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="sub" id="dash-arr-sub"></div>
+            <select id="dash-arr-officer" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="dashArrFilter()">
+              <option value="">All Officers</option>
+              ${officers.map(o=>`<option value="${o.id}">${o.full_name}</option>`).join('')}
+            </select>
+            <button class="btn btn-sm btn-outline" onclick="go('arrears')">View all</button>
+          </div>
+        </div>
         <div style="overflow-x:auto">
-          <table class="tbl">
-            <thead><tr><th>Member</th><th>Asset</th><th class="num">Loan value</th><th class="num">Outstanding</th><th class="num">Weekly</th><th>Track</th></tr></thead>
-            <tbody>
-              ${activeLoans.slice(0,10).map(l => {
-                const m = state.data.members.find(x=>x.id===l.member_id);
-                const out = Number(l.total_payable||0)-loanPaid(l.id);
-                const weeksElapsed = Math.max(0,Math.floor((Date.now()-new Date(l.start_date).getTime())/(7*86400000)));
-                const expected = weeksElapsed*Number(l.weekly_installment||0);
-                const paid = loanPaid(l.id);
-                const behind = Math.max(0,Math.ceil((expected-paid)/Number(l.weekly_installment||1)));
-                const cls = behind>=2?'b-red':behind===1?'b-yellow':'b-green';
-                return `<tr>
-                  <td>${m?.full_name||'—'}</td>
-                  <td>${l.asset_name}</td>
-                  <td class="num">${KES(l.loan_value)}</td>
-                  <td class="num">${KES(out)}</td>
-                  <td class="num">${KES(l.weekly_installment)}</td>
-                  <td><span class="badge ${cls}">${behind>0?behind+'w behind':'On track'}</span></td>
-                </tr>`;
-              }).join('') || `<tr><td colspan="6"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
-            </tbody>
+          <table class="tbl" id="dash-arr-tbl">
+            <thead><tr><th>Member</th><th>Asset</th><th>Officer</th><th class="num">Arrears</th><th>Next Due</th><th>Status</th></tr></thead>
+            <tbody id="dash-arr-body"></tbody>
           </table>
         </div>
       </div>
@@ -1180,8 +1172,72 @@ function pageDashboard(){
           </tbody>
         </table>
       </div>
-    </div>` : ''}
-  `;
+    </div>` : ''}\n  `;
+
+  // Populate the Due & Arrears mini-table after innerHTML is set
+  dashArrFilter();
+}
+
+function dashArrFilter(){
+  const offSel = document.getElementById('dash-arr-officer');
+  const body   = document.getElementById('dash-arr-body');
+  const sub    = document.getElementById('dash-arr-sub');
+  if(!body) return;
+
+  const offVal    = offSel ? offSel.value : '';
+  const today     = todayISO();
+  const msPerWeek = 7 * 24 * 3600 * 1000;
+  const nextWeekISO = new Date(new Date(today).getTime() + 7*24*3600*1000).toISOString().slice(0,10);
+
+  const activeLoans = state.data.loans.filter(l => l.status === 'active');
+  const rows = activeLoans.map(l => {
+    const paid      = loanPaid(l.id);
+    const startDate = new Date(l.start_date);
+    const weeksElapsed = Math.max(0, Math.floor((new Date(today) - startDate) / msPerWeek));
+    const weekly    = Number(l.weekly_installment) || 0;
+    const expectedPaid = Math.min(weeksElapsed * weekly, Number(l.total_payable) || 0);
+    const arrears   = Math.max(0, expectedPaid - paid);
+
+    let nextDueDate = null;
+    for (let w = 1; w <= 1040; w++) {
+      const d = new Date(startDate); d.setDate(d.getDate() + 7 * w);
+      const ds = d.toISOString().slice(0,10);
+      if (ds > today) { nextDueDate = ds; break; }
+    }
+
+    let category = 'ontrack';
+    if (arrears > 0) category = 'arrears';
+    else if (nextDueDate === today) category = 'duetoday';
+    else if (nextDueDate && nextDueDate <= nextWeekISO) category = 'duethisweek';
+
+    return { l, arrears, nextDueDate, category };
+  }).filter(r => r.category !== 'ontrack');
+
+  const filtered = offVal ? rows.filter(r => r.l.officer_id === offVal) : rows;
+  const catOrder = { arrears:0, duetoday:1, duethisweek:2 };
+  const display  = filtered.slice().sort((a,b)=>(catOrder[a.category]||3)-(catOrder[b.category]||3)).slice(0,10);
+
+  if(sub) sub.textContent = filtered.length + ' loan' + (filtered.length!==1?'s':'') + ' need attention';
+
+  if(!display.length){
+    body.innerHTML = '<tr><td colspan="6"><div class="empty" style="padding:16px 0"><h4>All loans on track \u2713</h4></div></td></tr>';
+    return;
+  }
+  body.innerHTML = display.map(function(row){
+    const l = row.l, arrears = row.arrears, nextDueDate = row.nextDueDate, category = row.category;
+    const mem = state.data.members.find(function(x){ return x.id===l.member_id; });
+    const off = state.data.staff.find(function(x){ return x.id===l.officer_id; });
+    const badgeCls = category==='arrears'?'b-red':category==='duetoday'?'b-yellow':'b-green';
+    const badgeTxt = category==='arrears'?'In Arrears':category==='duetoday'?'Due Today':'Due Soon';
+    return '<tr>'
+      + '<td><b>' + (mem ? mem.full_name : '\u2014') + '</b></td>'
+      + '<td>' + l.asset_name + '</td>'
+      + '<td style="font-size:12px;color:var(--text-muted)">' + (off ? off.full_name : '\u2014') + '</td>'
+      + '<td class="num"><b style="color:' + (arrears>0?'var(--danger)':'inherit') + '">' + KES(arrears) + '</b></td>'
+      + '<td>' + fmtDate(nextDueDate) + '</td>'
+      + '<td><span class="badge ' + badgeCls + '">' + badgeTxt + '</span></td>'
+      + '</tr>';
+  }).join('');
 }
 
 function pageOfficerDashboard(){
@@ -1913,30 +1969,40 @@ function renderMeetList(){
     <div style="background:var(--surface);border:1px solid var(--border);border-top:none;padding:14px;border-radius:0 0 var(--radius-lg) var(--radius-lg)">
       ${members.map(mem => {
         const sv = memberSavings(mem.id);
-        const ln = memberLoan(mem.id);
-        const ent = m.entries[mem.id] = m.entries[mem.id] || { savings:'', repayment: ln ? Number(ln.weekly_installment) : '', absent:false, notes:'' };
-        const out = ln ? Number(ln.total_payable) - loanPaid(ln.id) : 0;
+        const lns = state.data.loans.filter(l => l.member_id === mem.id && l.status === 'active');
+        const ent = m.entries[mem.id] = m.entries[mem.id] || { savings:'', repayments:{}, absent:false, notes:'' };
+
+        lns.forEach(ln => {
+          if(ent.repayments[ln.id] === undefined) ent.repayments[ln.id] = Number(ln.weekly_installment);
+        });
+
         return `<div class="mc">
           <div class="top">
             <div class="av">${initials(mem.full_name)}</div>
             <div style="flex:1">
               <div class="nm">${mem.full_name}</div>
-              <div class="meta">ID ${mem.national_id} · Savings ${KES(sv)}${ln?` · Loan outstanding ${KES(out)}`:''}</div>
+              <div class="meta">ID ${mem.national_id} · Total Savings ${KES(sv)} · ${lns.length} Active Loan(s)</div>
             </div>
           </div>
-          <div class="row ${ln?'three':''}">
+          <div class="row">
             <div>
               <label>Savings this week (KES)</label>
               <input type="number" min="0" data-id="${mem.id}" data-f="savings" value="${ent.savings}" ${ent.absent?'disabled':''} />
             </div>
-            ${ln ? `<div>
-              <label>Loan repayment (KES)</label>
-              <input type="number" min="0" data-id="${mem.id}" data-f="repayment" value="${ent.repayment}" ${ent.absent?'disabled':''} />
-            </div>` : ''}
-            <div>
-              <div class="ro">Outstanding<b>${ln?KES(out):'—'}</b></div>
-            </div>
+            <div></div>
           </div>
+          ${lns.map(ln => {
+            const out = Number(ln.total_payable) - loanPaid(ln.id);
+            return `<div class="row" style="margin-top:10px; border-top:1px dashed var(--border); padding-top:10px;">
+              <div>
+                <label>Repayment: <b>${ln.asset_name}</b> (KES)</label>
+                <input type="number" min="0" data-id="${mem.id}" data-loanid="${ln.id}" value="${ent.repayments[ln.id]}" ${ent.absent?'disabled':''} />
+              </div>
+              <div>
+                <div class="ro" style="margin-top:22px">Outstanding<b>${KES(out)}</b></div>
+              </div>
+            </div>`;
+          }).join('')}
           <div class="absent-row">
             <input type="checkbox" id="abs-${mem.id}" ${ent.absent?'checked':''} data-id="${mem.id}" data-f="absent" />
             <label for="abs-${mem.id}" style="margin:0">Mark as absent (no contributions this week)</label>
@@ -1945,15 +2011,29 @@ function renderMeetList(){
       }).join('')}
     </div>
   `;
-  host.querySelectorAll('[data-id]').forEach(el => {
+
+  host.querySelectorAll('input').forEach(el => {
     el.addEventListener('change', () => {
-      const id = el.dataset.id, f = el.dataset.f;
-      m.entries[id][f] = el.type==='checkbox' ? el.checked : el.value;
-      if(f==='absent' && el.checked){ m.entries[id].savings=0; m.entries[id].repayment=0; renderMeetList(); }
+      const id = el.dataset.id, f = el.dataset.f, lid = el.dataset.loanid;
+      if (el.type === 'checkbox') {
+        m.entries[id][f] = el.checked;
+        if (f === 'absent' && el.checked) {
+          m.entries[id].savings = 0;
+          Object.keys(m.entries[id].repayments).forEach(k => m.entries[id].repayments[k] = 0);
+          renderMeetList();
+        }
+      } else if (lid) {
+        m.entries[id].repayments[lid] = el.value;
+      } else {
+        m.entries[id][f] = el.value;
+      }
     });
     el.addEventListener('input', () => {
-      const id = el.dataset.id, f = el.dataset.f;
-      m.entries[id][f] = el.value;
+      const id = el.dataset.id, f = el.dataset.f, lid = el.dataset.loanid;
+      if (el.type !== 'checkbox') {
+        if (lid) m.entries[id].repayments[lid] = el.value;
+        else m.entries[id][f] = el.value;
+      }
     });
   });
 }
@@ -1962,7 +2042,6 @@ async function submitMeeting(){
   if(!m.groupId || !m.date) return toast('Group and date are required.', 'error');
   const members = state.data.members.filter(x=>x.group_id===m.groupId && x.status==='active');
 
-  // Create or fetch meeting record
   let meetingId = null;
   const existing = state.data.meetings.find(x=>x.group_id===m.groupId && x.meeting_date===m.date);
   if(existing){ meetingId = existing.id; }
@@ -1979,17 +2058,22 @@ async function submitMeeting(){
     const e = m.entries[mem.id] || {};
     if(e.absent){ continue; }
     const sav = Number(e.savings)||0;
-    const rep = Number(e.repayment)||0;
+
     if(sav>0){
       savRows.push({ member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, recorded_by: state.staff.id, notes: e.notes||null });
     }
-    const ln = memberLoan(mem.id);
-    if(rep>0 && ln){
-      // proportional split based on loan ratio
-      const ir = Number(ln.total_payable) ? (Number(ln.total_payable)-Number(ln.loan_value))/Number(ln.total_payable) : 0;
-      const interest = +(rep*ir).toFixed(2);
-      const principal = +(rep-interest).toFixed(2);
-      repRows.push({ loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id });
+
+    if (e.repayments) {
+      for (const [loanId, repAmount] of Object.entries(e.repayments)) {
+        const rep = Number(repAmount)||0;
+        const ln = state.data.loans.find(l => l.id === loanId);
+        if(rep > 0 && ln){
+          const ir = Number(ln.total_payable) ? (Number(ln.total_payable)-Number(ln.loan_value))/Number(ln.total_payable) : 0;
+          const interest = +(rep*ir).toFixed(2);
+          const principal = +(rep-interest).toFixed(2);
+          repRows.push({ loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id });
+        }
+      }
     }
   }
 
@@ -2004,7 +2088,6 @@ async function submitMeeting(){
   }
   audit('meeting_submit', 'pb_meetings', meetingId, null, { savings: okSav, repayments: okRep });
 
-  // Auto-complete loans whose outstanding hits zero
   for(const r of repRows){
     const ln = state.data.loans.find(l=>l.id===r.loan_id);
     if(ln && (Number(ln.total_payable) - loanPaid(ln.id)) <= 0){
@@ -2031,70 +2114,95 @@ function pageArrears(){
   );
 
   const today = todayISO();
-  const todayObj = new Date(today);
   const nextWeekObj = new Date(today);
   nextWeekObj.setDate(nextWeekObj.getDate() + 7);
   const nextWeekISO = nextWeekObj.toISOString().slice(0,10);
 
   const report = activeLoans.map(l => {
-    const m = state.data.members.find(x => x.id === l.member_id);
-    const g = state.data.groups.find(x => x.id === l.group_id);
+    const mem = state.data.members.find(x => x.id === l.member_id);
+    const g   = state.data.groups.find(x => x.id === l.group_id);
     const off = state.data.staff.find(x => x.id === l.officer_id);
     const paid = loanPaid(l.id);
 
-    // Calculate schedule to find expected payments
-    const schedule = computeSchedule(Number(l.loan_value), Number(l.weekly_installment), 'flat', new Date(l.start_date));
+    // FIX: Use actual weekly_installment from the loan record rather than
+    // recomputing via computeSchedule (which recalculates with current settings
+    // and produces a different installment, causing arrears to always show 0).
+    // Instead we count how many weekly slots have elapsed since start_date and
+    // multiply by the stored weekly_installment to get the expected amount paid.
+    const startDate  = new Date(l.start_date);
+    const msPerWeek  = 7 * 24 * 3600 * 1000;
+    const weeksElapsed = Math.max(0, Math.floor((new Date(today) - startDate) / msPerWeek));
+    const weekly = Number(l.weekly_installment) || 0;
+    const totalPayable = Number(l.total_payable) || 0;
 
-    // Find all past due installments
-    const pastRows = schedule.rows.filter(r => r.due.toISOString().slice(0,10) <= today);
-    const expectedPaid = pastRows.reduce((sum, r) => sum + r.installment, 0);
+    // Cap expected at total_payable so completed loans don't show false arrears
+    const expectedPaid = Math.min(weeksElapsed * weekly, totalPayable);
     const arrears = Math.max(0, expectedPaid - paid);
 
-    // Find the next upcoming installment
-    const futureRows = schedule.rows.filter(r => r.due.toISOString().slice(0,10) > today);
-    const nextDueRow = futureRows.length ? futureRows[0] : null;
-    const nextDueDate = nextDueRow ? nextDueRow.due.toISOString().slice(0,10) : null;
+    // Next due date: find the first future week slot from start_date
+    let nextDueDate = null;
+    for (let w = 1; w <= 1040; w++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + 7 * w);
+      const ds = d.toISOString().slice(0,10);
+      if (ds > today) { nextDueDate = ds; break; }
+    }
 
     let category = 'ontrack';
     if (arrears > 0) category = 'arrears';
     else if (nextDueDate === today) category = 'duetoday';
-    else if (nextDueDate > today && nextDueDate <= nextWeekISO) category = 'duethisweek';
+    else if (nextDueDate && nextDueDate > today && nextDueDate <= nextWeekISO) category = 'duethisweek';
 
-    return { loan: l, member: m, group: g, officer: off, paid, arrears, nextDueDate, expectedInstallment: Number(l.weekly_installment), category };
+    return { loan: l, member: mem, group: g, officer: off, paid, arrears, nextDueDate, expectedInstallment: weekly, category };
   });
 
   const tab = state._arrearsTab || 'arrears';
-  const filtered = report.filter(r => tab === 'all' ? true : r.category === tab);
+  // Officer filter (admin only)
+  const offFilter = state._arrearsOfficerFilter || '';
+  let filtered = report.filter(r => tab === 'all' ? true : r.category === tab);
+  if (isAdmin && offFilter) filtered = filtered.filter(r => r.loan.officer_id === offFilter);
+
+  // Officers who have at least one active loan (for dropdown)
+  const officersWithLoans = isAdmin
+    ? state.data.staff.filter(s => s.role === 'officer' && report.some(r => r.loan.officer_id === s.id))
+    : [];
 
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Due & Arrears</h1><div class="desc">Track missed payments and upcoming collections.</div></div>
     </div>
-    <div class="tabs">
-      ${[
-        ['arrears', `In Arrears (${report.filter(r=>r.category==='arrears').length})`],
-        ['duetoday', `Due Today (${report.filter(r=>r.category==='duetoday').length})`],
-        ['duethisweek', `Due Next 7 Days (${report.filter(r=>r.category==='duethisweek').length})`],
-        ['all', 'All Active']
-      ].map(([k, label]) => `<button class="${tab===k?'active':''}" onclick="state._arrearsTab='${k}';pageArrears()">${label}</button>`).join('')}
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;align-items:flex-end">
+      <div class="tabs" style="margin-bottom:0;border-bottom:none">
+        ${[
+          ['arrears',     `In Arrears (${report.filter(r=>r.category==='arrears').length})`],
+          ['duetoday',    `Due Today (${report.filter(r=>r.category==='duetoday').length})`],
+          ['duethisweek', `Due Next 7 Days (${report.filter(r=>r.category==='duethisweek').length})`],
+          ['all',         'All Active']
+        ].map(([k, label]) => `<button class="${tab===k?'active':''}" onclick="state._arrearsTab='${k}';pageArrears()">${label}</button>`).join('')}
+      </div>
+      ${isAdmin && officersWithLoans.length ? `
+        <select style="max-width:200px" onchange="state._arrearsOfficerFilter=this.value;pageArrears()">
+          <option value="">All Officers</option>
+          ${officersWithLoans.map(o=>`<option value="${o.id}" ${offFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
+        </select>` : ''}
     </div>
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
           <th>Member</th><th>Group</th>${isAdmin?'<th>Officer</th>':''}
-          <th>Asset</th><th class="num">Arrears Amount</th><th class="num">Weekly Inst.</th><th>Next Due</th><th>Status</th>
+          <th>Asset</th><th class="num">Arrears (KES)</th><th class="num">Weekly Inst.</th><th>Next Due</th><th>Status</th>
         </tr></thead>
         <tbody>
-          ${filtered.map(r => `<tr>
+          ${filtered.length ? filtered.map(r => `<tr>
             <td><b>${r.member?.full_name||'—'}</b><div class="muted" style="font-size:11px">${r.member?.phone||''}</div></td>
             <td>${r.group?.name||'—'}</td>
-            ${isAdmin ? `<td>${r.officer?.full_name||'—'}</td>` : ''}
+            ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||'—'}</td>` : ''}
             <td>${r.loan.asset_name}</td>
-            <td class="num"><b style="color:${r.arrears>0?'var(--danger)':'inherit'}">${KES(r.arrears)}</b></td>
+            <td class="num"><b style="color:${r.arrears>0?'var(--danger)':'var(--success)'}">${KES(r.arrears)}</b></td>
             <td class="num">${KES(r.expectedInstallment)}</td>
             <td>${fmtDate(r.nextDueDate)}</td>
             <td><span class="badge ${r.arrears>0?'b-red':r.category==='duetoday'?'b-yellow':'b-green'}">${r.arrears>0?'In Arrears':r.category==='duetoday'?'Due Today':'On Track'}</span></td>
-          </tr>`).join('') || `<tr><td colspan="${isAdmin?8:7}"><div class="empty"><h4>No records found</h4></div></td></tr>`}
+          </tr>`).join('') : `<tr><td colspan="${isAdmin?8:7}"><div class="empty"><h4>No records found</h4><p>No loans match this filter.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2169,6 +2277,7 @@ function loanActions(ev, id){
     { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
     ...(isAdmin && l.status==='active' ? [
       { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
+      { label:'Restructure Loan', onClick: ()=>openLoanRestructure(l) },
       { label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog(
           'Mark this loan as defaulted? This action will be logged.',
           async()=>{
@@ -2214,6 +2323,57 @@ function openLoanTransfer(l){
         }
       },
       { label: 'Cancel', cls: 'btn-outline', onClick: closeModal }
+    ]
+  });
+}
+function openLoanRestructure(l){
+  const paid = loanPaid(l.id);
+  const outstanding = Number(l.total_payable) - paid;
+
+  modal({
+    title: 'Restructure Loan — ' + l.asset_name,
+    body: '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">'
+        + 'Adjust the weekly installment to recalculate the remaining repayment schedule.'
+        + '<br><b>Current Weekly:</b> ' + KES(l.weekly_installment)
+        + '<br><b>Outstanding Balance:</b> ' + KES(outstanding)
+        + '</div>'
+        + '<div class="field"><label>New Weekly Installment (KES) *</label>'
+        + '<input type="number" id="lr-weekly" min="1" value="' + l.weekly_installment + '" required /></div>'
+        + '<div class="field"><label>Effective Date *</label>'
+        + '<input type="date" id="lr-date" value="' + todayISO() + '" required /></div>'
+        + '<div class="field"><label>Reason for Restructure</label>'
+        + '<textarea id="lr-reason" rows="2" placeholder="e.g. Member requested lower payments due to hardship..."></textarea></div>',
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: 'Apply Restructure', cls: 'btn-primary', onClick: async function() {
+        const newWeekly = Number(document.getElementById('lr-weekly').value);
+        const effectiveDateVal = document.getElementById('lr-date').value;
+        const reason = document.getElementById('lr-reason').value.trim();
+
+        if(!newWeekly || newWeekly <= 0) return toast('Invalid weekly amount.', 'error');
+
+        const effectiveDate = new Date(effectiveDateVal);
+        const remainingWeeks = Math.ceil(outstanding / newWeekly);
+        const end = new Date(effectiveDate);
+        end.setDate(end.getDate() + 7 * remainingWeeks);
+        const expectedEnd = end.toISOString().slice(0,10);
+
+        const oldWeekly = l.weekly_installment;
+        const upd = {
+          weekly_installment: newWeekly,
+          expected_end_date: expectedEnd,
+          notes: (l.notes || '') + ' [Restructured on ' + todayISO() + ': Weekly changed to ' + newWeekly + '. Reason: ' + reason + ']'
+        };
+
+        const { error } = await sb.from('pb_loans').update(upd).eq('id', l.id);
+        if(error) return toast('Failed to update loan: ' + error.message, 'error');
+
+        Object.assign(l, upd);
+        audit('loan_restructure', 'pb_loans', l.id, { old_weekly: oldWeekly }, { new_weekly: newWeekly, reason });
+        closeModal();
+        render();
+        toast('Loan restructured successfully.', 'success');
+      }}
     ]
   });
 }
