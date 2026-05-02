@@ -2021,11 +2021,13 @@ async function submitMeeting(){
  * PAGE: ACTIVE LOANS
  * ===================================================================== */
 function pageLoans(){
-  // Fix 3: Loan officers should only see loans they are responsible for
   const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+
   let loans = isAdmin
     ? state.data.loans
-    : state.data.loans.filter(l => l.officer_id === state.staff.id);
+    : state.data.loans.filter(l => myGroupIds.includes(l.group_id) || l.officer_id === state.staff.id);
+
   const tab = state._loanTab || 'active';
   loans = loans.filter(l => tab==='all' ? true : l.status===tab);
 
@@ -2510,8 +2512,12 @@ function exportInventory(){
  * ===================================================================== */
 function pageOrders(){
   const isAdmin = state.staff.role==='admin';
+  const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
   const tab = state._orderTab || 'pending';
-  const list = state.data.orders.filter(o => tab==='all'?true:o.status===tab);
+
+  const list = state.data.orders
+    .filter(o => isAdmin || myGroupIds.includes(o.group_id) || o.recorded_by === state.staff.id)
+    .filter(o => tab === 'all' ? true : o.status === tab);
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Orders</h1><div class="desc">Member asset orders awaiting approval and fulfilment.</div></div>
@@ -2523,11 +2529,12 @@ function pageOrders(){
       ${['pending','approved','rejected','fulfilled','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._orderTab='${t}';pageOrders()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
     </div>
     <div class="table-wrap"><table class="tbl">
-      <thead><tr><th>Date</th><th>Member</th><th>Group</th><th>Asset</th><th class="num">Qty</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Date</th><th>Member</th><th>Group</th><th>Asset</th><th class="num">Qty</th><th>Status</th><th>Recorded By</th><th></th></tr></thead>
       <tbody>
         ${list.map(o => {
           const m = state.data.members.find(x=>x.id===o.member_id);
           const g = state.data.groups.find(x=>x.id===o.group_id);
+          const off = state.data.staff.find(x => x.id === o.recorded_by);
           const cls = ({pending:'b-yellow',approved:'b-blue',rejected:'b-red',fulfilled:'b-green'})[o.status];
           return `<tr>
             <td>${fmtDate(o.ordered_on)}</td>
@@ -2536,9 +2543,10 @@ function pageOrders(){
             <td>${o.asset_name}</td>
             <td class="num">${o.quantity}</td>
             <td><span class="badge ${cls}">${o.status}</span></td>
+            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'—'}</td>
             <td><button class="act-btn" onclick="orderActions(event,'${o.id}')">···</button></td>
           </tr>`;
-        }).join('') || `<tr><td colspan="7"><div class="empty"><h4>No orders</h4><p>Place a new order on behalf of a member.</p></div></td></tr>`}
+        }).join('') || `<tr><td colspan="8"><div class="empty"><h4>No orders</h4><p>Place a new order on behalf of a member.</p></div></td></tr>`}
       </tbody>
     </table></div>
   `;
@@ -3359,14 +3367,13 @@ async function submitPurchase(){
  * ===================================================================== */
 function pageReconciliation(){
   const isAdmin = state.staff.role === 'admin';
-  // Fix 3: Officers see only remittances for their assigned groups
-  const myGroupIds = isAdmin
-    ? null
-    : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+  const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+
   const list = (state.data.reconciliations||[])
-    .filter(r => isAdmin || myGroupIds.includes(r.group_id))
+    .filter(r => isAdmin || myGroupIds.includes(r.group_id) || r.logged_by === state.staff.id)
     .slice()
     .sort((a,b)=> new Date(b.meeting_date)-new Date(a.meeting_date));
+
   const pending = list.filter(r=>r.status==='pending');
 
   $('page').innerHTML = `
