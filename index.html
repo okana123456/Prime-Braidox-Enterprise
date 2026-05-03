@@ -1123,15 +1123,15 @@ function pageDashboard(){
   const eligibleCount = state.data.members.filter(m=>memberEligible(m.id)).length;
   const invValue = state.data.inventory.reduce((a,i)=>a+Number(i.loan_price||0)*Number(i.stock||0),0);
 
-  // Officer performance
-  const officers = state.data.staff.filter(s=>s.role==='officer');
+  // Officer performance — active loan officers only
+  const officers = state.data.staff.filter(s => s.role==='officer' && s.status==='active');
   const todayISO_ = todayISO();
   const officerPerf = officers.map(o => {
     const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRange(s.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
     const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRange(r.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
     const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
-    const oDisbursedToday = state.data.loans.filter(l=>l.officer_id===o.id && (l.start_date||'').slice(0,10)===todayISO_).reduce((a,b)=>a+Number(b.loan_value||0),0);
-    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, disbursedToday: oDisbursedToday };
+    const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
+    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday };
   }).sort((a,b)=>b.savings-a.savings);
 
   const filterBtns = [
@@ -1208,14 +1208,14 @@ function pageDashboard(){
       <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp;·&nbsp; Active loans &amp; disbursed today are always current</div></div>
       <div style="overflow-x:auto">
         <table class="tbl">
-          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th><th class="num">Disbursed today</th></tr></thead>
+          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th><th class="num">Orders today</th></tr></thead>
           <tbody>
             ${officerPerf.map(o=>`<tr>
               <td><b>${o.name}</b></td>
               <td class="num">${KES(o.savings)}</td>
               <td class="num">${KES(o.repayments)}</td>
               <td class="num">${o.loans}</td>
-              <td class="num" style="color:${o.disbursedToday>0?'var(--primary)':'inherit'}">${o.disbursedToday>0?KES(o.disbursedToday):'—'}</td>
+              <td class="num" style="color:${o.disbursedToday>0?'var(--primary)':'inherit'}">${o.ordersToday>0?o.ordersToday:'—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
