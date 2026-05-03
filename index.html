@@ -1130,7 +1130,7 @@ function pageDashboard(){
     const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRange(s.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
     const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRange(r.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
     const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
-    const oDisbursedToday = state.data.loans.filter(l=>l.officer_id===o.id && (l.start_date||'').slice(0,10)===todayISO_).reduce((a,b)=>a+Number(b.principal||0),0);
+    const oDisbursedToday = state.data.loans.filter(l=>l.officer_id===o.id && (l.start_date||'').slice(0,10)===todayISO_).reduce((a,b)=>a+Number(b.loan_value||0),0);
     return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, disbursedToday: oDisbursedToday };
   }).sort((a,b)=>b.savings-a.savings);
 
@@ -1205,7 +1205,7 @@ function pageDashboard(){
 
     ${officerPerf.length ? `
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><h3>Loan officer performance</h3><div class="sub">${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</div></div>
+      <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp;·&nbsp; Active loans &amp; disbursed today are always current</div></div>
       <div style="overflow-x:auto">
         <table class="tbl">
           <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th><th class="num">Disbursed today</th></tr></thead>
