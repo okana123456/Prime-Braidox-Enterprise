@@ -904,6 +904,8 @@ function navItems(){
     { k:'groups', label:'Groups', show:true, icon:groupsIcon() },
     { k:'members', label:'Members', show:true, icon:memberIcon() },
     { k:'meeting', label:'Meeting Recorder', show:isAdmin || p.can_record_savings || p.can_record_repayments, icon:meetingIcon() },
+    { k:'savings', label:'Savings', show:true, icon:savingsIcon() },
+    { k:'repayments', label:'Repayments', show:true, icon:repaymentsIcon() },
     { k:'loans', label:'Active Loans', show:true, icon:loanIcon() },
     { k:'arrears', label:'Due & Arrears', show:true, icon: ic('<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>') },
     { k:'calculator', label:'Loan Calculator', show:true, icon:calcIcon() },
@@ -981,6 +983,7 @@ function renderShell(){
 function pageTitle(){
   return ({
     dashboard:'Dashboard', groups:'Groups', members:'Members', meeting:'Meeting Recorder',
+    savings:'Savings', repayments:'Repayments',
     loans:'Active Loans', calculator:'Loan Calculator', inventory:'Inventory',
     suppliers:'Suppliers', purchases:'Purchases', orders:'Orders',
     reconciliation:'Remittances', reports:'Reports', accounting:'Accounting',
@@ -999,7 +1002,8 @@ function toggleSidebar(force){
 function renderPage(){
   const fns = {
     dashboard: pageDashboard, groups: pageGroups, members: pageMembers,
-    meeting: pageMeeting, loans: pageLoans, arrears: pageArrears, calculator: pageCalculator,
+    meeting: pageMeeting, savings: pageSavings, repayments: pageRepayments,
+    loans: pageLoans, arrears: pageArrears, calculator: pageCalculator,
     inventory: pageInventory, suppliers: pageSuppliers, purchases: pagePurchases,
     orders: pageOrders, reconciliation: pageReconciliation, reports: pageReports, accounting: pageAccounting,
     staff: pageStaff, settings: pageSettings, audit: pageAudit,
@@ -1027,6 +1031,8 @@ function supplierIcon(){ return ic('<path d="M16 3h5v5"/><path d="M21 3l-7 7"/><
 function purchaseIcon(){ return ic('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>'); }
 function recIcon(){ return ic('<path d="M3 12h4l3-9 4 18 3-9h4"/>'); }
 function accountingIcon(){ return ic('<path d="M2 20h20M5 20V8l7-6 7 6v12"/><path d="M9 20v-5h6v5"/><path d="M9 11h6"/>'); }
+function savingsIcon(){ return ic('<rect x="2" y="8" width="20" height="12" rx="2"/><path d="M6 8V6a4 4 0 0 1 8 0v2"/><circle cx="12" cy="14" r="2"/>'); }
+function repaymentsIcon(){ return ic('<path d="M12 2v20M2 12l4-4 4 4"/><path d="M22 12l-4 4-4-4"/><path d="M6 16H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/>'); }
 function themeIcon(){ return ic('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'); }
 function switchIcon(){ return ic('<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'); }
 
@@ -2375,7 +2381,7 @@ function pageLoans(){
         ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${tab==='active' ? `<button class="btn btn-outline btn-sm" onclick="downloadCollectionSheet()" title="Export loans due today as Excel sheet">📋 Today's Collection Sheet</button>` : ''}
+        ${tab==='active' ? `<button class="btn btn-outline btn-sm" onclick="openCollectionSheetModal()" title="Export collection sheet as Excel">📋 Collection Sheet</button>` : ''}
         ${isAdmin ? `
         <select style="max-width:200px" onchange="state._loanOfficerFilter=this.value; pageLoans()">
           <option value="">All Officers</option>
@@ -4219,64 +4225,434 @@ function pageAccounting(){
   `;
 }
 /* =====================================================================
- * FEATURE 1: DAILY LOAN COLLECTION SHEET EXPORT
+ * PAGE: SAVINGS
  * ===================================================================== */
-function downloadCollectionSheet(){
-  const today = todayISO();
-  const msPerWeek = 7 * 24 * 3600 * 1000;
+let _savingsDateFilter = 'month';
+let _savingsCustomStart = '', _savingsCustomEnd = '';
+let _savingsGroupFilter = '';
+let _savingsOfficerFilter = '';
 
-  const activeLoans = state.data.loans.filter(l => l.status === 'active');
-  const rows = [];
+function savingsDateRange(){
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const today = iso(now);
+  if(_savingsDateFilter==='today') return { start: today, end: today };
+  if(_savingsDateFilter==='yesterday'){
+    const y = new Date(now); y.setDate(y.getDate()-1); const yd = iso(y);
+    return { start: yd, end: yd };
+  }
+  if(_savingsDateFilter==='week'){
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_savingsDateFilter==='month'){
+    const d = new Date(now); d.setDate(1);
+    return { start: iso(d), end: today };
+  }
+  if(_savingsDateFilter==='custom'){
+    return { start: _savingsCustomStart||today, end: _savingsCustomEnd||today };
+  }
+  return { start: today, end: today };
+}
 
-  activeLoans.forEach(l => {
-    const startDate = new Date(l.start_date);
+function pageSavings(){
+  const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? null : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+
+  const { start, end } = savingsDateRange();
+  const inRange = s => {
+    const d = (s.meeting_date||'').slice(0,10);
+    if(d >= start && d <= end) return true;
+    if(s.created_at){ const cd = new Date(s.created_at).toISOString().slice(0,10); return cd >= start && cd <= end; }
+    return false;
+  };
+
+  let filtered = state.data.savings.filter(s => {
+    if(!isAdmin && !myGroupIds.includes(s.group_id)) return false;
+    if(!inRange(s)) return false;
+    if(_savingsGroupFilter && s.group_id !== _savingsGroupFilter) return false;
+    if(_savingsOfficerFilter && s.recorded_by !== _savingsOfficerFilter) return false;
+    return true;
+  });
+
+  const groups = isAdmin
+    ? state.data.groups
+    : state.data.groups.filter(g => myGroupIds.includes(g.id));
+  const officers = state.data.staff.filter(s => s.role === 'officer' && s.status === 'active');
+
+  const dateFilterBtns = [
+    ['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','This Month'],['custom','Custom Range']
+  ];
+
+  const totalAmt = filtered.reduce((a,b)=>a+Number(b.amount||0),0);
+
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>Savings Ledger</h1><div class="desc">${filtered.length} entries · Total ${KES(totalAmt)}</div></div>
+      <div class="actions">
+        <button class="btn btn-outline" onclick="exportSavingsFiltered()">⬇ Export to Excel</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      ${dateFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_savingsDateFilter===k?'btn-primary':'btn-outline'}" onclick="_savingsDateFilter='${k}';pageSavings()">${l}</button>`).join('')}
+      ${_savingsDateFilter==='custom'?`
+        <input type="date" value="${_savingsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_savingsCustomStart=this.value;pageSavings()" />
+        <span class="muted" style="font-size:12px">to</span>
+        <input type="date" value="${_savingsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_savingsCustomEnd=this.value;pageSavings()" />
+      `:''}
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      <select style="max-width:220px;font-size:13px" onchange="_savingsGroupFilter=this.value;pageSavings()">
+        <option value="">All Groups</option>
+        ${groups.map(g=>`<option value="${g.id}" ${_savingsGroupFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
+      </select>
+      ${isAdmin ? `<select style="max-width:220px;font-size:13px" onchange="_savingsOfficerFilter=this.value;pageSavings()">
+        <option value="">All Officers</option>
+        ${officers.map(o=>`<option value="${o.id}" ${_savingsOfficerFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
+      </select>` : ''}
+      ${(_savingsGroupFilter||_savingsOfficerFilter)?`<button class="btn btn-sm btn-ghost" onclick="_savingsGroupFilter='';_savingsOfficerFilter='';pageSavings()">✕ Clear filters</button>`:''}
+    </div>
+
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date</th><th>Member</th><th>Group</th><th class="num">Amount</th><th>Recorded By</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${filtered.length ? filtered.map(s => {
+            const mem = state.data.members.find(x=>x.id===s.member_id);
+            const grp = state.data.groups.find(x=>x.id===s.group_id);
+            const rec = state.data.staff.find(x=>x.id===s.recorded_by);
+            return `<tr>
+              <td>${fmtDate(s.meeting_date)}</td>
+              <td><b>${mem?.full_name||'—'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
+              <td>${grp?.name||'—'}</td>
+              <td class="num"><b>${KES(s.amount)}</b>${s.edit_notes?`<div class="muted" style="font-size:10px" title="${s.edit_notes}">✏ edited</div>`:''}
+              </td>
+              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'—'}</td>
+              <td><button class="act-btn" onclick="savingsRowActions(event,'${s.id}')">···</button></td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="6"><div class="empty"><h4>No savings found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function savingsRowActions(ev, id){
+  showActMenu(ev, [
+    { label: '✏ Edit entry', onClick: () => openEditSaving(id) }
+  ]);
+}
+
+function exportSavingsFiltered(){
+  const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? null : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+  const { start, end } = savingsDateRange();
+  const inRange = s => {
+    const d = (s.meeting_date||'').slice(0,10);
+    if(d >= start && d <= end) return true;
+    if(s.created_at){ const cd = new Date(s.created_at).toISOString().slice(0,10); return cd >= start && cd <= end; }
+    return false;
+  };
+  const filtered = state.data.savings.filter(s => {
+    if(!isAdmin && !myGroupIds.includes(s.group_id)) return false;
+    if(!inRange(s)) return false;
+    if(_savingsGroupFilter && s.group_id !== _savingsGroupFilter) return false;
+    if(_savingsOfficerFilter && s.recorded_by !== _savingsOfficerFilter) return false;
+    return true;
+  });
+  if(!filtered.length){ toast('No savings to export for the current filters.','warn'); return; }
+  const rows = filtered.map(s => {
+    const mem = state.data.members.find(x=>x.id===s.member_id);
+    const grp = state.data.groups.find(x=>x.id===s.group_id);
+    const rec = state.data.staff.find(x=>x.id===s.recorded_by);
+    return { Date: s.meeting_date, Member: mem?.full_name||'—', Group: grp?.name||'—', Amount: Number(s.amount), 'Recorded By': rec?.full_name||'—' };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Savings');
+  XLSX.writeFile(wb, `savings_${start}_${end}.xlsx`);
+  toast(`Exported ${rows.length} savings entries.`, 'success');
+}
+
+/* =====================================================================
+ * PAGE: REPAYMENTS
+ * ===================================================================== */
+let _repDateFilter = 'month';
+let _repCustomStart = '', _repCustomEnd = '';
+let _repGroupFilter = '';
+let _repOfficerFilter = '';
+
+function repDateRange(){
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const today = iso(now);
+  if(_repDateFilter==='today') return { start: today, end: today };
+  if(_repDateFilter==='yesterday'){
+    const y = new Date(now); y.setDate(y.getDate()-1); const yd = iso(y);
+    return { start: yd, end: yd };
+  }
+  if(_repDateFilter==='week'){
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_repDateFilter==='month'){
+    const d = new Date(now); d.setDate(1);
+    return { start: iso(d), end: today };
+  }
+  if(_repDateFilter==='custom'){
+    return { start: _repCustomStart||today, end: _repCustomEnd||today };
+  }
+  return { start: today, end: today };
+}
+
+function pageRepayments(){
+  const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? null : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+
+  const { start, end } = repDateRange();
+  const inRange = r => {
+    const d = (r.meeting_date||'').slice(0,10);
+    if(d >= start && d <= end) return true;
+    if(r.created_at){ const cd = new Date(r.created_at).toISOString().slice(0,10); return cd >= start && cd <= end; }
+    return false;
+  };
+
+  let filtered = state.data.repayments.filter(r => {
+    if(!isAdmin && !myGroupIds.includes(r.group_id)) return false;
+    if(!inRange(r)) return false;
+    if(_repGroupFilter && r.group_id !== _repGroupFilter) return false;
+    if(_repOfficerFilter && r.recorded_by !== _repOfficerFilter) return false;
+    return true;
+  });
+
+  const groups = isAdmin
+    ? state.data.groups
+    : state.data.groups.filter(g => myGroupIds.includes(g.id));
+  const officers = state.data.staff.filter(s => s.role === 'officer' && s.status === 'active');
+
+  const dateFilterBtns = [
+    ['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','This Month'],['custom','Custom Range']
+  ];
+
+  const totalAmt = filtered.reduce((a,b)=>a+Number(b.amount||0),0);
+  const totalPrincipal = filtered.reduce((a,b)=>a+Number(b.principal||0),0);
+  const totalInterest = filtered.reduce((a,b)=>a+Number(b.interest||0),0);
+
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>Repayments Register</h1><div class="desc">${filtered.length} entries · Total ${KES(totalAmt)} · Principal ${KES(totalPrincipal)} · Interest ${KES(totalInterest)}</div></div>
+      <div class="actions">
+        <button class="btn btn-outline" onclick="exportRepaymentsFiltered()">⬇ Export to Excel</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      ${dateFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_repDateFilter===k?'btn-primary':'btn-outline'}" onclick="_repDateFilter='${k}';pageRepayments()">${l}</button>`).join('')}
+      ${_repDateFilter==='custom'?`
+        <input type="date" value="${_repCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_repCustomStart=this.value;pageRepayments()" />
+        <span class="muted" style="font-size:12px">to</span>
+        <input type="date" value="${_repCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_repCustomEnd=this.value;pageRepayments()" />
+      `:''}
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      <select style="max-width:220px;font-size:13px" onchange="_repGroupFilter=this.value;pageRepayments()">
+        <option value="">All Groups</option>
+        ${groups.map(g=>`<option value="${g.id}" ${_repGroupFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
+      </select>
+      ${isAdmin ? `<select style="max-width:220px;font-size:13px" onchange="_repOfficerFilter=this.value;pageRepayments()">
+        <option value="">All Officers</option>
+        ${officers.map(o=>`<option value="${o.id}" ${_repOfficerFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
+      </select>` : ''}
+      ${(_repGroupFilter||_repOfficerFilter)?`<button class="btn btn-sm btn-ghost" onclick="_repGroupFilter='';_repOfficerFilter='';pageRepayments()">✕ Clear filters</button>`:''}
+    </div>
+
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date</th><th>Member</th><th>Group</th><th>Loan Asset</th>
+          <th class="num">Total</th><th class="num">Principal</th><th class="num">Interest</th>
+          <th>Recorded By</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${filtered.length ? filtered.map(r => {
+            const mem = state.data.members.find(x=>x.id===r.member_id);
+            const grp = state.data.groups.find(x=>x.id===r.group_id);
+            const ln = state.data.loans.find(x=>x.id===r.loan_id);
+            const rec = state.data.staff.find(x=>x.id===r.recorded_by);
+            return `<tr>
+              <td>${fmtDate(r.meeting_date)}</td>
+              <td><b>${mem?.full_name||'—'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
+              <td>${grp?.name||'—'}</td>
+              <td style="font-size:12px">${ln?.asset_name||'—'}</td>
+              <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?`<div class="muted" style="font-size:10px" title="${r.edit_notes}">✏ edited</div>`:''}
+              </td>
+              <td class="num">${KES(r.principal)}</td>
+              <td class="num" style="color:var(--warning)">${KES(r.interest)}</td>
+              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'—'}</td>
+              <td><button class="act-btn" onclick="repRowActions(event,'${r.id}')">···</button></td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="9"><div class="empty"><h4>No repayments found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function repRowActions(ev, id){
+  showActMenu(ev, [
+    { label: '✏ Edit entry', onClick: () => openEditRepayment(id) }
+  ]);
+}
+
+function exportRepaymentsFiltered(){
+  const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? null : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
+  const { start, end } = repDateRange();
+  const inRange = r => {
+    const d = (r.meeting_date||'').slice(0,10);
+    if(d >= start && d <= end) return true;
+    if(r.created_at){ const cd = new Date(r.created_at).toISOString().slice(0,10); return cd >= start && cd <= end; }
+    return false;
+  };
+  const filtered = state.data.repayments.filter(r => {
+    if(!isAdmin && !myGroupIds.includes(r.group_id)) return false;
+    if(!inRange(r)) return false;
+    if(_repGroupFilter && r.group_id !== _repGroupFilter) return false;
+    if(_repOfficerFilter && r.recorded_by !== _repOfficerFilter) return false;
+    return true;
+  });
+  if(!filtered.length){ toast('No repayments to export for the current filters.','warn'); return; }
+  const rows = filtered.map(r => {
+    const mem = state.data.members.find(x=>x.id===r.member_id);
+    const grp = state.data.groups.find(x=>x.id===r.group_id);
+    const ln = state.data.loans.find(x=>x.id===r.loan_id);
+    const rec = state.data.staff.find(x=>x.id===r.recorded_by);
+    return {
+      Date: r.meeting_date,
+      Member: mem?.full_name||'—',
+      Group: grp?.name||'—',
+      'Loan Asset': ln?.asset_name||'—',
+      'Total Amount': Number(r.amount),
+      Principal: Number(r.principal),
+      Interest: Number(r.interest),
+      'Recorded By': rec?.full_name||'—'
+    };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Repayments');
+  XLSX.writeFile(wb, `repayments_${start}_${end}.xlsx`);
+  toast(`Exported ${rows.length} repayment entries.`, 'success');
+}
+
+/* =====================================================================
+ * FEATURE 1: DAILY LOAN COLLECTION SHEET EXPORT (with modal)
+ * ===================================================================== */
+function openCollectionSheetModal(){
+  const isAdmin = state.staff.role === 'admin';
+  const officers = state.data.staff.filter(s => s.role === 'officer' && s.status === 'active');
+
+  modal({
+    title: 'Export Collection Sheet',
+    body: `
+      <div class="field">
+        <label>Target Date</label>
+        <input type="date" id="cs-date" value="${todayISO()}" />
+        <div class="helper">Groups meeting on this day of the week will be included.</div>
+      </div>
+      <div class="field">
+        <label>Loan Officer</label>
+        ${isAdmin
+          ? `<select id="cs-officer">
+              <option value="">All Officers</option>
+              ${officers.map(o=>`<option value="${o.id}">${o.full_name}</option>`).join('')}
+             </select>`
+          : `<input disabled value="${state.staff.full_name}" /><input type="hidden" id="cs-officer" value="${state.staff.id}" />`
+        }
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;font-size:12px;color:var(--text-muted)">
+        <b>How it works:</b> The export finds groups whose meeting day matches the day of the week for the selected date, optionally filtered by officer, then exports all active loans for members of those groups.
+      </div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: '📋 Export Excel', cls: 'btn-primary', onClick: () => {
+        const dateVal = document.getElementById('cs-date')?.value || todayISO();
+        const officerVal = document.getElementById('cs-officer')?.value || '';
+        closeModal();
+        downloadCollectionSheet(dateVal, officerVal);
+      }}
+    ]
+  });
+}
+
+function downloadCollectionSheet(targetDate, officerFilter){
+  targetDate = targetDate || todayISO();
+  const isAdmin = state.staff.role === 'admin';
+
+  // Determine day of week from target date (e.g. "Monday")
+  const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const dow = dayNames[new Date(targetDate + 'T12:00:00').getDay()];
+
+  // Filter groups by meeting_day matching the target day, and by officer if set
+  const matchedGroups = state.data.groups.filter(g => {
+    const dayMatch = (g.meeting_day || '').toLowerCase() === dow.toLowerCase();
+    if(!dayMatch) return false;
+    if(officerFilter) return g.officer_id === officerFilter;
+    if(!isAdmin) return g.officer_id === state.staff.id;
+    return true;
+  });
+
+  if(!matchedGroups.length){
+    toast(`No groups meet on ${dow} (${targetDate})${officerFilter ? ' for the selected officer' : ''}.`, 'warn');
+    return;
+  }
+
+  const matchedGroupIds = new Set(matchedGroups.map(g => g.id));
+
+  const activeLoans = state.data.loans.filter(l =>
+    l.status === 'active' && matchedGroupIds.has(l.group_id)
+  );
+
+  if(!activeLoans.length){
+    toast(`No active loans found for groups meeting on ${dow}.`, 'warn');
+    return;
+  }
+
+  const rows = activeLoans.map(l => {
+    const m = state.data.members.find(x => x.id === l.member_id);
+    const g = state.data.groups.find(x => x.id === l.group_id);
+    const off = state.data.staff.find(x => x.id === l.officer_id);
     const weekly = Number(l.weekly_installment) || 0;
     const totalPayable = Number(l.total_payable) || 0;
-
-    // Find the next due date
-    let dueToday = false;
-    for(let w = 1; w <= 1040; w++){
-      const d = new Date(startDate);
-      d.setDate(d.getDate() + 7 * w);
-      const ds = d.toISOString().slice(0,10);
-      if(ds === today){ dueToday = true; break; }
-      if(ds > today) break;
-    }
-    if(!dueToday) return;
-
-    const m = state.data.members.find(x => x.id === l.member_id);
     const paid = loanPaid(l.id);
     const outstanding = Math.max(0, totalPayable - paid);
     const paidInstallments = weekly > 0 ? Math.floor(paid / weekly) : 0;
     const totalInstallments = weekly > 0 ? Math.ceil(totalPayable / weekly) : 0;
     const unpaidInstallments = Math.max(0, totalInstallments - paidInstallments);
-
-    rows.push({
+    return {
       'Client ID': m?.national_id || '—',
       'Client Name': m?.full_name || '—',
+      'Group': g?.name || '—',
+      'Officer': off?.full_name || '—',
       'Loan Product (Asset)': l.asset_name,
       'Outstanding Balance': Number(outstanding.toFixed(2)),
       'Installment Amount': weekly,
       'Paid Installments': paidInstallments,
       'Unpaid Installments': unpaidInstallments,
       'Expected End Date': l.expected_end_date || '—'
-    });
+    };
   });
 
-  if(!rows.length){
-    toast('No loans are due for repayment today.', 'warn');
-    return;
-  }
-
   const ws = XLSX.utils.json_to_sheet(rows);
-  // Auto-size columns
-  const colWidths = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length, 18) }));
-  ws['!cols'] = colWidths;
-
+  ws['!cols'] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length, 18) }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, `Collection ${today}`);
-  XLSX.writeFile(wb, `collection_sheet_${today}.xlsx`);
-  toast(`Collection sheet exported — ${rows.length} loan${rows.length!==1?'s':''} due today.`, 'success');
+  XLSX.utils.book_append_sheet(wb, ws, `${dow} Collection`);
+  XLSX.writeFile(wb, `collection_sheet_${dow}_${targetDate}.xlsx`);
+  toast(`Collection sheet exported — ${rows.length} loan${rows.length!==1?'s':''} for ${dow} (${targetDate}).`, 'success');
 }
 
 /* =====================================================================
