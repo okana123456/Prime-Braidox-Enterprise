@@ -1148,10 +1148,24 @@ function pageDashboard(){
   if(!isAdmin){ pageOfficerDashboard(); return; }
 
   const { start, end } = dashDateRange();
-  const inRange = date => date >= start && date <= end;
+  // Robust inRange: compare date strings directly (YYYY-MM-DD), with a fallback
+  // that also matches records whose created_at timestamp falls in the range (handles
+  // timezone edge-cases where meeting_date may be off by one day).
+  const inRange = date => {
+    if(!date) return false;
+    const d = date.slice(0,10); // normalise to YYYY-MM-DD
+    if(d >= start && d <= end) return true;
+    return false;
+  };
+  const inRangeFallback = (dateStr, createdAt) => {
+    if(inRange(dateStr)) return true;
+    if(!createdAt) return false;
+    const cd = new Date(createdAt).toISOString().slice(0,10);
+    return cd >= start && cd <= end;
+  };
 
-  const savings = state.data.savings.filter(s => inRange(s.meeting_date||''));
-  const repayments = state.data.repayments.filter(r => inRange(r.meeting_date||''));
+  const savings = state.data.savings.filter(s => inRangeFallback(s.meeting_date||'', s.created_at));
+  const repayments = state.data.repayments.filter(r => inRangeFallback(r.meeting_date||'', r.created_at));
   const totalSavings = savings.reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRepay = repayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const activeLoans = state.data.loans.filter(l=>l.status==='active');
@@ -1339,9 +1353,15 @@ function pageOfficerDashboard(){
   const myGroups = state.data.groups.filter(g=>g.officer_id===me.id);
   const myMembers = state.data.members.filter(m=>myGroups.some(g=>g.id===m.group_id));
   const { start, end } = dashDateRange();
-  const inRange = date => date >= start && date <= end;
-  const mySavings = state.data.savings.filter(s=>s.recorded_by===me.id && inRange(s.meeting_date||''));
-  const myRepay = state.data.repayments.filter(r=>r.recorded_by===me.id && inRange(r.meeting_date||''));
+  const inRangeOff = (dateStr, createdAt) => {
+    if(!dateStr && !createdAt) return false;
+    const d = (dateStr||'').slice(0,10);
+    if(d >= start && d <= end) return true;
+    if(createdAt){ const cd = new Date(createdAt).toISOString().slice(0,10); if(cd >= start && cd <= end) return true; }
+    return false;
+  };
+  const mySavings = state.data.savings.filter(s=>s.recorded_by===me.id && inRangeOff(s.meeting_date, s.created_at));
+  const myRepay = state.data.repayments.filter(r=>r.recorded_by===me.id && inRangeOff(r.meeting_date, r.created_at));
   const myLoans = state.data.loans.filter(l=>l.officer_id===me.id && l.status==='active');
   const totalSv = mySavings.reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
@@ -1906,17 +1926,24 @@ function pageMemberProfile(){
         <div class="card">
           <div class="card-head"><h3>Savings history</h3><div class="sub">Total: ${KES(totalSv)}</div></div>
           <div style="overflow-x:auto"><table class="tbl">
-            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Recorded by</th></tr></thead>
+            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
             <tbody>
               ${(()=>{
                 let running = 0;
+                const canEdit = state.staff.role==='admin' || state.staff.role==='officer';
                 return [...sv].reverse().map(s=>{
                   running += Number(s.amount||0);
                   const officer = state.data.staff.find(x=>x.id===s.recorded_by);
-                  return `<tr><td>${fmtDate(s.meeting_date)}</td><td class="num">${KES(s.amount)}</td><td class="num" style="color:var(--success)">${KES(running)}</td><td>${officer?.full_name||'—'}</td></tr>`;
+                  return `<tr>
+                    <td>${fmtDate(s.meeting_date)}</td>
+                    <td class="num">${KES(s.amount)}${s.edit_notes?'<span title="Edited: '+s.edit_notes.replace(/"/g,"'")+'" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
+                    <td class="num" style="color:var(--success)">${KES(running)}</td>
+                    <td>${officer?.full_name||'—'}</td>
+                    ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditSaving('${s.id}')}])">···</button></td>`:''}
+                  </tr>`;
                 }).reverse().join('');
               })()}
-              ${!sv.length?`<tr><td colspan="4"><div class="empty"><h4>No savings yet</h4></div></td></tr>`:''}
+              ${!sv.length?`<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?5:4}"><div class="empty"><h4>No savings yet</h4></div></td></tr>`:''}
             </tbody>
           </table></div>
         </div>
@@ -1983,20 +2010,28 @@ function pageMemberProfile(){
 
       ${tab==='repayments' ? `
         <div class="card">
-          <div class="card-head"><h3>Repayment history</h3><div class="sub">Total repaid: ${KES(repayments.reduce((a,b)=>a+Number(b.amount||0),0))}</div></div>
+          <div class="card-head">
+            <h3>Repayment history</h3>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <div class="sub">Total repaid: ${KES(repayments.reduce((a,b)=>a+Number(b.amount||0),0))}</div>
+              ${ln ? `<button class="btn btn-sm btn-primary" onclick="openStandaloneRepayment('${ln.id}','${m.id}')">📥 Record Repayment</button>` : ''}
+            </div>
+          </div>
           <div style="overflow-x:auto"><table class="tbl">
-            <thead><tr><th>Date</th><th class="num">Amount</th><th class="num">Principal</th><th class="num">Interest</th><th>Recorded by</th></tr></thead>
+            <thead><tr><th>Date</th><th class="num">Amount</th><th class="num">Principal</th><th class="num">Interest</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
             <tbody>
               ${repayments.map(r=>{
                 const officer = state.data.staff.find(x=>x.id===r.recorded_by);
+                const canEdit = state.staff.role==='admin' || state.staff.role==='officer';
                 return `<tr>
                   <td>${fmtDate(r.meeting_date)}</td>
-                  <td class="num"><b>${KES(r.amount)}</b></td>
+                  <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?'<span title="Edited: '+r.edit_notes.replace(/"/g,"'")+'" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
                   <td class="num">${KES(r.principal)}</td>
                   <td class="num">${KES(r.interest)}</td>
                   <td>${officer?.full_name||'—'}</td>
+                  ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditRepayment('${r.id}')}])">···</button></td>`:''}
                 </tr>`;
-              }).join('') || `<tr><td colspan="5"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
+              }).join('') || `<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?6:5}"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
             </tbody>
           </table></div>
         </div>
@@ -2339,12 +2374,15 @@ function pageLoans(){
       <div class="tabs" style="margin-bottom:0; border-bottom:none;">
         ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
-      ${isAdmin ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${tab==='active' ? `<button class="btn btn-outline btn-sm" onclick="downloadCollectionSheet()" title="Export loans due today as Excel sheet">📋 Today's Collection Sheet</button>` : ''}
+        ${isAdmin ? `
         <select style="max-width:200px" onchange="state._loanOfficerFilter=this.value; pageLoans()">
           <option value="">All Officers</option>
           ${state.data.staff.filter(s=>s.role==='officer').map(o=>`<option value="${o.id}" ${state._loanOfficerFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
         </select>
-      ` : ''}
+        ` : ''}
+      </div>
     </div>
     <div class="table-wrap">
       <table class="tbl">
@@ -2381,8 +2419,10 @@ function pageLoans(){
 function loanActions(ev, id){
   const l = state.data.loans.find(x=>x.id===id);
   const isAdmin = state.staff.role==='admin';
+  const canRepay = isAdmin || state.staff.role === 'officer';
   showActMenu(ev, [
     { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
+    ...(canRepay && l.status==='active' ? [{ label:'📥 Record Repayment', onClick: ()=>openStandaloneRepayment(l.id, l.member_id) }] : []),
     ...(isAdmin && l.status==='active' ? [
       { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
       { label:'Restructure Loan', onClick: ()=>openLoanRestructure(l) },
@@ -4178,6 +4218,293 @@ function pageAccounting(){
     </div>` : ''}
   `;
 }
+/* =====================================================================
+ * FEATURE 1: DAILY LOAN COLLECTION SHEET EXPORT
+ * ===================================================================== */
+function downloadCollectionSheet(){
+  const today = todayISO();
+  const msPerWeek = 7 * 24 * 3600 * 1000;
+
+  const activeLoans = state.data.loans.filter(l => l.status === 'active');
+  const rows = [];
+
+  activeLoans.forEach(l => {
+    const startDate = new Date(l.start_date);
+    const weekly = Number(l.weekly_installment) || 0;
+    const totalPayable = Number(l.total_payable) || 0;
+
+    // Find the next due date
+    let dueToday = false;
+    for(let w = 1; w <= 1040; w++){
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + 7 * w);
+      const ds = d.toISOString().slice(0,10);
+      if(ds === today){ dueToday = true; break; }
+      if(ds > today) break;
+    }
+    if(!dueToday) return;
+
+    const m = state.data.members.find(x => x.id === l.member_id);
+    const paid = loanPaid(l.id);
+    const outstanding = Math.max(0, totalPayable - paid);
+    const paidInstallments = weekly > 0 ? Math.floor(paid / weekly) : 0;
+    const totalInstallments = weekly > 0 ? Math.ceil(totalPayable / weekly) : 0;
+    const unpaidInstallments = Math.max(0, totalInstallments - paidInstallments);
+
+    rows.push({
+      'Client ID': m?.national_id || '—',
+      'Client Name': m?.full_name || '—',
+      'Loan Product (Asset)': l.asset_name,
+      'Outstanding Balance': Number(outstanding.toFixed(2)),
+      'Installment Amount': weekly,
+      'Paid Installments': paidInstallments,
+      'Unpaid Installments': unpaidInstallments,
+      'Expected End Date': l.expected_end_date || '—'
+    });
+  });
+
+  if(!rows.length){
+    toast('No loans are due for repayment today.', 'warn');
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  // Auto-size columns
+  const colWidths = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length, 18) }));
+  ws['!cols'] = colWidths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `Collection ${today}`);
+  XLSX.writeFile(wb, `collection_sheet_${today}.xlsx`);
+  toast(`Collection sheet exported — ${rows.length} loan${rows.length!==1?'s':''} due today.`, 'success');
+}
+
+/* =====================================================================
+ * FEATURE 3: STANDALONE REPAYMENT ENTRY
+ * ===================================================================== */
+function openStandaloneRepayment(loanId, memberId){
+  const ln = state.data.loans.find(l => l.id === loanId);
+  const mem = state.data.members.find(m => m.id === (memberId || ln?.member_id));
+  if(!ln){ toast('Loan not found.', 'error'); return; }
+
+  const paid = loanPaid(ln.id);
+  const outstanding = Math.max(0, Number(ln.total_payable) - paid);
+  const ir = Number(ln.total_payable) ? (Number(ln.total_payable) - Number(ln.loan_value)) / Number(ln.total_payable) : 0;
+
+  modal({
+    title: `Record Repayment — ${ln.asset_name}`,
+    body: `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem?.full_name||'—'}</div></div>
+          <div><div class="muted" style="font-size:11px">Asset</div><div style="font-weight:600">${ln.asset_name}</div></div>
+          <div><div class="muted" style="font-size:11px">Weekly installment</div><div style="font-weight:600">${KES(ln.weekly_installment)}</div></div>
+          <div><div class="muted" style="font-size:11px">Outstanding balance</div><div style="font-weight:600;color:var(--danger)">${KES(outstanding)}</div></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Repayment Amount (KES) *</label>
+        <input type="number" id="sr-amount" min="1" max="${outstanding||999999}" step="0.01" value="${ln.weekly_installment}" oninput="srCalcSplit(${ir})" />
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="sr-date" value="${todayISO()}" />
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-top:2px;font-size:13px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:6px">Calculated split</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><div class="muted" style="font-size:11px">Principal</div><div id="sr-principal" style="font-weight:700">${KES(+(Number(ln.weekly_installment)*(1-ir)).toFixed(2))}</div></div>
+          <div><div class="muted" style="font-size:11px">Interest</div><div id="sr-interest" style="font-weight:700;color:var(--warning)">${KES(+(Number(ln.weekly_installment)*ir).toFixed(2))}</div></div>
+        </div>
+      </div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: 'Save Repayment', cls: 'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const amount = Number(document.getElementById('sr-amount')?.value) || 0;
+        const date = document.getElementById('sr-date')?.value || todayISO();
+        if(!amount || amount <= 0) return toast('Please enter a valid amount.', 'error');
+        if(amount > outstanding + 1) return toast(`Amount exceeds outstanding balance of ${KES(outstanding)}.`, 'error');
+
+        const interest = +(amount * ir).toFixed(2);
+        const principal = +(amount - interest).toFixed(2);
+
+        const row = {
+          business_id: state.staff.business_id || null,
+          loan_id: ln.id,
+          member_id: ln.member_id,
+          group_id: ln.group_id || null,
+          meeting_date: date,
+          amount, principal, interest,
+          recorded_by: state.staff.id
+        };
+
+        const { data, error } = await sb.from('pb_repayments').insert(row).select().single();
+        if(error) return toast(error.message, 'error');
+
+        state.data.repayments.unshift(data);
+        audit('standalone_repayment', 'pb_repayments', data.id, null, row);
+
+        // Auto-complete loan if fully paid
+        const newPaid = paid + amount;
+        if(newPaid >= Number(ln.total_payable)){
+          await sb.from('pb_loans').update({ status: 'completed' }).eq('id', ln.id);
+          ln.status = 'completed';
+          toast('Loan fully repaid and marked as completed!', 'success');
+        } else {
+          toast('Repayment recorded successfully.', 'success');
+        }
+        closeModal();
+        render();
+      }}
+    ]
+  });
+}
+
+function srCalcSplit(ir){
+  const amount = Number(document.getElementById('sr-amount')?.value) || 0;
+  const interest = +(amount * ir).toFixed(2);
+  const principal = +(amount - interest).toFixed(2);
+  const pi = document.getElementById('sr-principal'); if(pi) pi.textContent = KES(principal);
+  const ii = document.getElementById('sr-interest'); if(ii) ii.textContent = KES(interest);
+}
+
+/* =====================================================================
+ * FEATURE 4 & 5: EDIT SAVINGS with AUDIT TRAIL
+ * ===================================================================== */
+function openEditSaving(savingId){
+  const canEdit = state.staff.role === 'admin' || state.staff.role === 'officer';
+  if(!canEdit){ toast('You do not have permission to edit savings entries.', 'error'); return; }
+
+  const sv = state.data.savings.find(x => x.id === savingId);
+  if(!sv){ toast('Saving entry not found.', 'error'); return; }
+
+  const mem = state.data.members.find(x => x.id === sv.member_id);
+
+  modal({
+    title: 'Edit Savings Entry',
+    body: `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
+        <div><span class="muted">Member: </span><b>${mem?.full_name||'—'}</b></div>
+        <div><span class="muted">Date: </span><b>${fmtDate(sv.meeting_date)}</b></div>
+        <div><span class="muted">Original amount: </span><b>${KES(sv.amount)}</b></div>
+      </div>
+      <div class="field">
+        <label>New Amount (KES) *</label>
+        <input type="number" id="es-amount" min="0" step="0.01" value="${sv.amount}" required />
+      </div>
+      <div class="field">
+        <label>Reason for Edit * <span style="color:var(--danger)">required</span></label>
+        <textarea id="es-reason" rows="3" placeholder="Describe why this entry is being edited (e.g. incorrect amount entered, data correction)..." required style="resize:vertical"></textarea>
+      </div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: 'Save Changes', cls: 'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const amount = Number(document.getElementById('es-amount')?.value);
+        const reason = document.getElementById('es-reason')?.value.trim();
+        if(!amount && amount !== 0) return toast('Please enter a valid amount.', 'error');
+        if(!reason) return toast('A reason for the edit is required.', 'error');
+
+        const oldAmount = sv.amount;
+        const { error } = await sb.from('pb_savings')
+          .update({ amount, edit_notes: reason })
+          .eq('id', savingId);
+
+        if(error) return toast(error.message, 'error');
+
+        sv.amount = amount;
+        sv.edit_notes = reason;
+        audit('edit_saving', 'pb_savings', savingId, { amount: oldAmount }, { amount, edit_notes: reason });
+        closeModal();
+        render();
+        toast('Savings entry updated successfully.', 'success');
+      }}
+    ]
+  });
+}
+
+/* =====================================================================
+ * FEATURE 4 & 5: EDIT REPAYMENT with AUDIT TRAIL
+ * ===================================================================== */
+function openEditRepayment(repaymentId){
+  const canEdit = state.staff.role === 'admin' || state.staff.role === 'officer';
+  if(!canEdit){ toast('You do not have permission to edit repayment entries.', 'error'); return; }
+
+  const rep = state.data.repayments.find(x => x.id === repaymentId);
+  if(!rep){ toast('Repayment entry not found.', 'error'); return; }
+
+  const mem = state.data.members.find(x => x.id === rep.member_id);
+  const ln = state.data.loans.find(x => x.id === rep.loan_id);
+  const ir = ln && Number(ln.total_payable) ? (Number(ln.total_payable) - Number(ln.loan_value)) / Number(ln.total_payable) : 0;
+
+  modal({
+    title: 'Edit Repayment Entry',
+    body: `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
+        <div><span class="muted">Member: </span><b>${mem?.full_name||'—'}</b></div>
+        <div><span class="muted">Loan: </span><b>${ln?.asset_name||'—'}</b></div>
+        <div><span class="muted">Date: </span><b>${fmtDate(rep.meeting_date)}</b></div>
+        <div><span class="muted">Original amount: </span><b>${KES(rep.amount)}</b></div>
+      </div>
+      <div class="field">
+        <label>New Amount (KES) *</label>
+        <input type="number" id="er-amount" min="0" step="0.01" value="${rep.amount}" oninput="erCalcSplit(${ir})" required />
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:6px">Recalculated split</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><div class="muted" style="font-size:11px">Principal</div><div id="er-principal" style="font-weight:700">${KES(+(rep.amount*(1-ir)).toFixed(2))}</div></div>
+          <div><div class="muted" style="font-size:11px">Interest</div><div id="er-interest" style="font-weight:700;color:var(--warning)">${KES(+(rep.amount*ir).toFixed(2))}</div></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Reason for Edit * <span style="color:var(--danger)">required</span></label>
+        <textarea id="er-reason" rows="3" placeholder="Describe why this entry is being edited..." required style="resize:vertical"></textarea>
+      </div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: 'Save Changes', cls: 'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const amount = Number(document.getElementById('er-amount')?.value);
+        const reason = document.getElementById('er-reason')?.value.trim();
+        if(!amount && amount !== 0) return toast('Please enter a valid amount.', 'error');
+        if(!reason) return toast('A reason for the edit is required.', 'error');
+
+        const interest = +(amount * ir).toFixed(2);
+        const principal = +(amount - interest).toFixed(2);
+        const oldAmount = rep.amount;
+
+        const { error } = await sb.from('pb_repayments')
+          .update({ amount, principal, interest, edit_notes: reason })
+          .eq('id', repaymentId);
+
+        if(error) return toast(error.message, 'error');
+
+        rep.amount = amount;
+        rep.principal = principal;
+        rep.interest = interest;
+        rep.edit_notes = reason;
+        audit('edit_repayment', 'pb_repayments', repaymentId, { amount: oldAmount }, { amount, principal, interest, edit_notes: reason });
+        closeModal();
+        render();
+        toast('Repayment entry updated successfully.', 'success');
+      }}
+    ]
+  });
+}
+
+function erCalcSplit(ir){
+  const amount = Number(document.getElementById('er-amount')?.value) || 0;
+  const interest = +(amount * ir).toFixed(2);
+  const principal = +(amount - interest).toFixed(2);
+  const pi = document.getElementById('er-principal'); if(pi) pi.textContent = KES(principal);
+  const ii = document.getElementById('er-interest'); if(ii) ii.textContent = KES(interest);
+}
+
 function exportAccountingReport(){
   const { start, end } = dashDateRange();
   const inRange = date => date >= start && date <= end;
