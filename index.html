@@ -460,7 +460,7 @@ const state = {
   data: {
     groups: [], members: [], guarantors: [], staff: [], inventory: [],
     loans: [], orders: [], savings: [], repayments: [], meetings: [],
-    suppliers: [], purchases: [], purchaseLines: [], reconciliations: [], audit: []
+    suppliers: [], purchases: [], purchaseLines: [], reconciliations: [], expenses: [], audit: []
   },
   loading: true
 };
@@ -651,8 +651,8 @@ async function smartLoadAll(){
     }
   }
   state.loading = true; render();
-  const tables = ['pb_groups','pb_members','pb_guarantors','pb_staff','pb_inventory','pb_loans','pb_orders','pb_savings','pb_repayments','pb_meetings','pb_suppliers','pb_purchases','pb_purchase_lines','pb_reconciliations'];
-  const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_staff:'staff', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations' };
+  const tables = ['pb_groups','pb_members','pb_guarantors','pb_staff','pb_inventory','pb_loans','pb_orders','pb_savings','pb_repayments','pb_meetings','pb_suppliers','pb_purchases','pb_purchase_lines','pb_reconciliations','pb_expenses'];
+  const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_staff:'staff', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations', pb_expenses:'expenses' };
   const results = await Promise.all(tables.map(t => {
     let query = sb.from(t).select('*').limit(5000);
     if (state.staff && state.staff.business_id) {
@@ -698,7 +698,7 @@ function setupRealtime(){
         return;
       }
       const tbl = payload.table;
-      const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_staff:'staff', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations' };
+      const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_staff:'staff', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations', pb_expenses:'expenses' };
       const key = map[tbl]; if(!key) return;
       const arr = state.data[key];
       if(payload.eventType === 'INSERT'){ if(!arr.find(x=>x.id===payload.new.id)) arr.unshift(payload.new); }
@@ -914,6 +914,7 @@ function navItems(){
     { k:'purchases', label:'Purchases', show:isAdmin || p.can_manage_suppliers, icon:purchaseIcon() },
     { k:'orders', label:'Orders', show:isAdmin || p.can_submit_orders || p.can_approve_orders, icon:orderIcon() },
     { k:'reconciliation', label:'Remittances', show:true, icon:recIcon() },
+    { k:'expenses', label:'Expenses', show:isAdmin || p.can_view_reports, icon:expensesIcon() },
     { k:'accounting', label:'Accounting', show:isAdmin, icon:accountingIcon() },
     { k:'reports', label:'Reports', show:isAdmin || p.can_view_reports, icon:reportIcon() },
   ];
@@ -986,7 +987,7 @@ function pageTitle(){
     savings:'Savings', repayments:'Repayments',
     loans:'Active Loans', calculator:'Loan Calculator', inventory:'Inventory',
     suppliers:'Suppliers', purchases:'Purchases', orders:'Orders',
-    reconciliation:'Remittances', reports:'Reports', accounting:'Accounting',
+    reconciliation:'Remittances', expenses:'Expenses', reports:'Reports', accounting:'Accounting',
     staff:'Staff & Permissions', settings:'Settings', audit:'Audit Log',
     memberProfile:'Member Profile'
   })[state.view] || '—';
@@ -1005,7 +1006,7 @@ function renderPage(){
     meeting: pageMeeting, savings: pageSavings, repayments: pageRepayments,
     loans: pageLoans, arrears: pageArrears, calculator: pageCalculator,
     inventory: pageInventory, suppliers: pageSuppliers, purchases: pagePurchases,
-    orders: pageOrders, reconciliation: pageReconciliation, reports: pageReports, accounting: pageAccounting,
+    orders: pageOrders, reconciliation: pageReconciliation, expenses: pageExpenses, reports: pageReports, accounting: pageAccounting,
     staff: pageStaff, settings: pageSettings, audit: pageAudit,
     memberProfile: pageMemberProfile
   };
@@ -1031,6 +1032,7 @@ function supplierIcon(){ return ic('<path d="M16 3h5v5"/><path d="M21 3l-7 7"/><
 function purchaseIcon(){ return ic('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>'); }
 function recIcon(){ return ic('<path d="M3 12h4l3-9 4 18 3-9h4"/>'); }
 function accountingIcon(){ return ic('<path d="M2 20h20M5 20V8l7-6 7 6v12"/><path d="M9 20v-5h6v5"/><path d="M9 11h6"/>'); }
+function expensesIcon(){ return ic('<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><path d="M7 15h2m4 0h4"/>'); }
 function savingsIcon(){ return ic('<rect x="2" y="8" width="20" height="12" rx="2"/><path d="M6 8V6a4 4 0 0 1 8 0v2"/><circle cx="12" cy="14" r="2"/>'); }
 function repaymentsIcon(){ return ic('<path d="M12 2v20M2 12l4-4 4 4"/><path d="M22 12l-4 4-4-4"/><path d="M6 16H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"/>'); }
 function themeIcon(){ return ic('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'); }
@@ -4141,6 +4143,10 @@ function pageAccounting(){
   const loansIssued = state.data.loans.filter(l=>inRange(l.start_date||''));
   const totalLoansOut = loansIssued.reduce((a,b)=>a+Number(b.loan_value||0),0);
 
+  // === OPERATIONAL EXPENSES ===
+  const expensesInPeriod = (state.data.expenses||[]).filter(e=>inRange(e.date||''));
+  const totalExpensesOut = expensesInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
+
   // === BALANCE SHEET SNAPSHOT ===
   const activeLoans = state.data.loans.filter(l=>l.status==='active');
   const totalOutstanding = activeLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
@@ -4179,6 +4185,7 @@ function pageAccounting(){
       <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${membersRegisteredInPeriod.length} new member${membersRegisteredInPeriod.length!==1?'s':''}</div></div>
       <div class="kpi k-warn"><div class="l">Loans issued (cash out)</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
+      <div class="kpi k-danger"><div class="l">Operational Expenses</div><div class="v">${KES(totalExpensesOut)}</div><div class="d">${expensesInPeriod.length} entr${expensesInPeriod.length!==1?'ies':'y'}</div></div>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
@@ -4192,8 +4199,9 @@ function pageAccounting(){
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn+totalRegFees)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalPurchasesOut)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalLoansOut)}</td></tr>
-          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">−${KES(totalPurchasesOut+totalLoansOut)}</td></tr>
-          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn-totalPurchasesOut-totalLoansOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees-totalPurchasesOut-totalLoansOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Operational expenses (${expensesInPeriod.length})</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalExpensesOut)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">−${KES(totalPurchasesOut+totalLoansOut+totalExpensesOut)}</td></tr>
+          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn+totalRegFees-totalPurchasesOut-totalLoansOut-totalExpensesOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees-totalPurchasesOut-totalLoansOut-totalExpensesOut)}</td></tr>
         </table>
       </div>
       <div class="card card-pad">
@@ -4224,6 +4232,194 @@ function pageAccounting(){
     </div>` : ''}
   `;
 }
+/* =====================================================================
+ * PAGE: EXPENSES
+ * ===================================================================== */
+let _expDateFilter = 'month';
+let _expCustomStart = '', _expCustomEnd = '';
+
+const EXPENSE_CATEGORIES = ['Transport','Office Supplies','Utilities','Salary','Airtime/Data','Other'];
+
+function expDateRange(){
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const today = iso(now);
+  if(_expDateFilter==='today') return { start: today, end: today };
+  if(_expDateFilter==='yesterday'){
+    const y = new Date(now); y.setDate(y.getDate()-1); const yd = iso(y);
+    return { start: yd, end: yd };
+  }
+  if(_expDateFilter==='week'){
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_expDateFilter==='month'){
+    const d = new Date(now); d.setDate(1);
+    return { start: iso(d), end: today };
+  }
+  if(_expDateFilter==='custom'){
+    return { start: _expCustomStart||today, end: _expCustomEnd||today };
+  }
+  return { start: today, end: today };
+}
+
+function pageExpenses(){
+  const isAdmin = state.staff.role === 'admin';
+  const { start, end } = expDateRange();
+
+  const inRangeFallback = (dateStr, createdAt) => {
+    const d = (dateStr||'').slice(0,10);
+    if(d >= start && d <= end) return true;
+    if(createdAt){ const cd = new Date(createdAt).toISOString().slice(0,10); return cd >= start && cd <= end; }
+    return false;
+  };
+
+  const filtered = (state.data.expenses||[]).filter(e => inRangeFallback(e.date||'', e.created_at));
+  const totalAmt = filtered.reduce((a,b)=>a+Number(b.amount||0),0);
+
+  const dateFilterBtns = [
+    ['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','This Month'],['custom','Custom Range']
+  ];
+
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>Expenses</h1><div class="desc">${filtered.length} entries · Total ${KES(totalAmt)}</div></div>
+      <div class="actions">
+        ${isAdmin ? `<button class="btn btn-primary" onclick="openExpenseForm()">+ Record Expense</button>` : ''}
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      ${dateFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_expDateFilter===k?'btn-primary':'btn-outline'}" onclick="_expDateFilter='${k}';pageExpenses()">${l}</button>`).join('')}
+      ${_expDateFilter==='custom'?`
+        <input type="date" value="${_expCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_expCustomStart=this.value;pageExpenses()" />
+        <span class="muted" style="font-size:12px">to</span>
+        <input type="date" value="${_expCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_expCustomEnd=this.value;pageExpenses()" />
+      `:''}
+    </div>
+
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date</th><th>Category</th><th>Description</th><th class="num">Amount</th><th>Recorded By</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${filtered.length ? filtered.map(e => {
+            const rec = state.data.staff.find(x=>x.id===e.recorded_by);
+            const catColors = {
+              Transport:'b-blue', 'Office Supplies':'b-grey', Utilities:'b-yellow',
+              Salary:'b-info', 'Airtime/Data':'b-green', Other:'b-grey'
+            };
+            return `<tr>
+              <td>${fmtDate(e.date)}</td>
+              <td><span class="badge ${catColors[e.category]||'b-grey'}">${e.category||'—'}</span></td>
+              <td style="max-width:260px;white-space:normal;font-size:13px">${e.description||'—'}</td>
+              <td class="num"><b>${KES(e.amount)}</b></td>
+              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'—'}</td>
+              <td><button class="act-btn" onclick="expenseActions(event,'${e.id}')">···</button></td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="6"><div class="empty"><h4>No expenses found</h4><p>No expense entries for the selected period.${isAdmin?' Use "Record Expense" to add one.':''}</p></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function expenseActions(ev, id){
+  const isAdmin = state.staff.role === 'admin';
+  const items = [
+    { label: '✏ Edit Expense', onClick: () => openExpenseForm(id) },
+  ];
+  if(isAdmin){
+    items.push('sep');
+    items.push({ label: 'Delete Expense', danger: true, onClick: () => confirmDialog(
+      'Delete this expense record? This cannot be undone.',
+      async () => {
+        if(!(await ensureFreshToken())) return;
+        const { error } = await sb.from('pb_expenses').delete().eq('id', id);
+        if(error) return toast(error.message, 'error');
+        state.data.expenses = state.data.expenses.filter(x => x.id !== id);
+        audit('delete_expense', 'pb_expenses', id);
+        render();
+        toast('Expense deleted.', 'warn');
+      },
+      { title: 'Delete Expense', danger: true }
+    )});
+  }
+  showActMenu(ev, items);
+}
+
+function openExpenseForm(id=null){
+  const isAdmin = state.staff.role === 'admin';
+  if(!isAdmin){ toast('Only administrators can record or edit expenses.', 'error'); return; }
+
+  const existing = id ? (state.data.expenses||[]).find(x => x.id === id) : null;
+  const title = existing ? 'Edit Expense' : 'Record Expense';
+
+  modal({
+    title,
+    body: `
+      <div class="grid-2">
+        <div class="field">
+          <label>Date *</label>
+          <input type="date" id="ef-date" value="${existing?.date || todayISO()}" required />
+        </div>
+        <div class="field">
+          <label>Category *</label>
+          <select id="ef-category" required>
+            ${EXPENSE_CATEGORIES.map(c=>`<option value="${c}" ${existing?.category===c?'selected':''}>${c}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Amount (KES) *</label>
+        <input type="number" id="ef-amount" min="0.01" step="0.01" value="${existing?.amount||''}" placeholder="0.00" required />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="ef-description" rows="3" placeholder="Brief description of what this expense was for…" style="resize:vertical">${existing?.description||''}</textarea>
+      </div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: existing ? 'Save Changes' : 'Record Expense', cls: 'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const date = document.getElementById('ef-date')?.value;
+        const category = document.getElementById('ef-category')?.value;
+        const amount = Number(document.getElementById('ef-amount')?.value);
+        const description = document.getElementById('ef-description')?.value.trim();
+
+        if(!date) return toast('Date is required.', 'error');
+        if(!category) return toast('Category is required.', 'error');
+        if(!amount || amount <= 0) return toast('Enter a valid amount greater than zero.', 'error');
+
+        const row = {
+          business_id: state.staff.business_id || null,
+          date,
+          category,
+          amount,
+          description: description || null,
+          recorded_by: state.staff.id
+        };
+
+        if(existing){
+          const { error } = await sb.from('pb_expenses').update({ date, category, amount, description: description||null }).eq('id', existing.id);
+          if(error) return toast(error.message, 'error');
+          Object.assign(existing, { date, category, amount, description: description||null });
+          audit('update_expense', 'pb_expenses', existing.id, null, { date, category, amount });
+          closeModal(); render(); toast('Expense updated.', 'success');
+        } else {
+          const { data, error } = await sb.from('pb_expenses').insert(row).select().single();
+          if(error) return toast(error.message, 'error');
+          state.data.expenses.unshift(data);
+          audit('create_expense', 'pb_expenses', data.id, null, row);
+          closeModal(); render(); toast('Expense recorded successfully.', 'success');
+        }
+      }}
+    ]
+  });
+}
+
 /* =====================================================================
  * PAGE: SAVINGS
  * ===================================================================== */
