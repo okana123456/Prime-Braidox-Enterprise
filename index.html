@@ -1370,7 +1370,8 @@ function pageOfficerDashboard(){
   };
   const mySavings = state.data.savings.filter(s=>s.recorded_by===me.id && inRangeOff(s.meeting_date, s.created_at));
   const myRepay = state.data.repayments.filter(r=>r.recorded_by===me.id && inRangeOff(r.meeting_date, r.created_at));
-  const myLoans = state.data.loans.filter(l=>l.officer_id===me.id && l.status==='active');
+  const myGroupIds = new Set(myGroups.map(g=>g.id));
+  const myLoans = state.data.loans.filter(l=>l.status==='active' && (l.officer_id===me.id || myGroupIds.has(l.group_id)));
   const totalSv = mySavings.reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
   const myOutstandingBal = myLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
@@ -3154,18 +3155,20 @@ function approveOrder(o){
   const member = state.data.members.find(x=>x.id===o.member_id);
   if(!asset || !member) return toast('Order references missing asset or member.','error');
   if(asset.stock < o.quantity) return toast('Insufficient stock to fulfill this order.','error');
+  const principal = asset.loan_price * o.quantity;
   modal({
     title:`Approve & issue loan — ${member.full_name}`,
     body:`<form id="al">
       <table class="summary-table">
         <tr><td>Asset</td><td>${asset.name} × ${o.quantity}</td></tr>
-        <tr><td>Loan value</td><td><b>${KES(asset.loan_price * o.quantity)}</b></td></tr>
+        <tr><td>Loan value</td><td><b>${KES(principal)}</b></td></tr>
       </table>
       <div class="divider"></div>
       <div class="grid-2">
-        <div class="field"><label>Weekly installment (KES)</label><input id="wi" type="number" min="1" value="500" required /></div>
-        <div class="field"><label>Loan start date</label><input id="sd" type="date" value="${todayISO()}" /></div>
+        <div class="field"><label>Desired Number of Weeks</label><input id="al-weeks" type="number" min="1" max="52" placeholder="e.g. 10" /></div>
+        <div class="field"><label>Weekly Installment (KES)</label><input id="wi" type="number" min="1" placeholder="e.g. 500" /></div>
       </div>
+      <div class="field"><label>Loan start date</label><input id="sd" type="date" value="${todayISO()}" /></div>
       <div id="al-out" class="muted" style="font-size:12px"></div>
     </form>`,
     actions:[
@@ -3173,10 +3176,15 @@ function approveOrder(o){
       { label:'Issue loan', cls:'btn-primary', onClick: async () => {
         if(!(await ensureFreshToken())) return;
         const weekly = Number($('wi').value)||0;
+        const weeksInput = Number($('al-weeks').value)||0;
         const start = new Date($('sd').value);
-        const principal = asset.loan_price * o.quantity;
         if(weekly <= 0) return toast('Weekly installment must be greater than zero.','error');
         const r = computeSchedule(principal, weekly, 'flat', start);
+        // Enforce 52-week safety limit
+        const effectiveWeeks = weeksInput > 0 ? weeksInput : r.weeks;
+        if(effectiveWeeks > 52 || r.weeks > 52){
+          return toast('The maximum allowed loan term is 52 weeks (1 year). Please increase the weekly payment or reduce the weeks.','error');
+        }
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
         const loan = {
           business_id: state.staff.business_id || null,
@@ -3197,12 +3205,45 @@ function approveOrder(o){
     ]
   });
   setTimeout(() => {
-    const upd = () => {
-      const w = Number($('wi').value)||0; const s = new Date($('sd').value||todayISO());
-      const r = computeSchedule(asset.loan_price * o.quantity, w, 'flat', s);
-      $('al-out').innerHTML = `Total payable ${KES(r.totalPayable)} · Total interest ${KES(r.totalInterest)} · ${r.weeks} weeks${r.weeks>(state.settings?.max_loan_weeks||52)?' <span class="danger-text">(exceeds max term)</span>':''}`;
+    let _updating = false;
+    const updFromWeeks = () => {
+      if(_updating) return; _updating = true;
+      const weeks = Number($('al-weeks').value)||0;
+      if(weeks > 0){
+        // Calculate weekly installment needed to clear principal+interest in given weeks
+        // Use flat rate: totalPayable = principal * (1 + rate * weeks/52), installment = totalPayable / weeks
+        const rate = state.settings?.monthly_interest_rate || 0.025;
+        const annualRate = rate * 12;
+        const weeklyRate = annualRate / 52;
+        const totalPayable = principal * (1 + weeklyRate * weeks);
+        const wi = Math.ceil(totalPayable / weeks);
+        $('wi').value = wi;
+      }
+      _updating = false;
+      updSummary();
     };
-    $('wi').addEventListener('input', upd); $('sd').addEventListener('change', upd); upd();
+    const updFromInstallment = () => {
+      if(_updating) return; _updating = true;
+      const weekly = Number($('wi').value)||0;
+      if(weekly > 0){
+        const s = new Date($('sd').value||todayISO());
+        const r = computeSchedule(principal, weekly, 'flat', s);
+        $('al-weeks').value = r.weeks;
+      }
+      _updating = false;
+      updSummary();
+    };
+    const updSummary = () => {
+      const w = Number($('wi').value)||0;
+      if(!w){ $('al-out').innerHTML = ''; return; }
+      const s = new Date($('sd').value||todayISO());
+      const r = computeSchedule(principal, w, 'flat', s);
+      const over52 = r.weeks > 52;
+      $('al-out').innerHTML = `Total payable ${KES(r.totalPayable)} · Total interest ${KES(r.totalInterest)} · ${r.weeks} weeks${over52 ? ' <span class="danger-text">(exceeds 52-week limit)</span>' : ''}`;
+    };
+    $('al-weeks').addEventListener('input', updFromWeeks);
+    $('wi').addEventListener('input', updFromInstallment);
+    $('sd').addEventListener('change', updSummary);
   }, 50);
 }
 
