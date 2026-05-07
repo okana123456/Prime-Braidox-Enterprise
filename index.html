@@ -1373,6 +1373,8 @@ function pageOfficerDashboard(){
   const myLoans = state.data.loans.filter(l=>l.officer_id===me.id && l.status==='active');
   const totalSv = mySavings.reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
+  const myOutstandingBal = myLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
+  const myInterestEarned = myRepay.reduce((a,r)=>a+Number(r.interest||0),0);
 
   const filterBtns = [
     ['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']
@@ -1387,11 +1389,12 @@ function pageOfficerDashboard(){
       <span class="muted" style="font-size:12px">to</span>
       <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageDashboard()" />`:''}
     </div>
-    <div class="kpi-grid">
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
       <div class="kpi k-primary"><div class="l">My groups</div><div class="v">${myGroups.length}</div></div>
       <div class="kpi k-success"><div class="l">Savings recorded</div><div class="v">${KES(totalSv)}</div><div class="d">${mySavings.length} entries</div></div>
-      <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">${myRepay.length} entries</div></div>
+      <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">Interest ${KES(myInterestEarned)}</div></div>
       <div class="kpi k-warn"><div class="l">Active loans I manage</div><div class="v">${myLoans.length}</div></div>
+      <div class="kpi k-danger"><div class="l">Outstanding balance</div><div class="v">${KES(myOutstandingBal)}</div><div class="d">across my active loans</div></div>
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-head"><h3>My groups</h3></div>
@@ -1402,6 +1405,24 @@ function pageOfficerDashboard(){
             const mc = state.data.members.filter(m=>m.group_id===g.id).length;
             return `<tr><td><b>${g.name}</b></td><td class="num">${mc}</td><td class="num">${KES(groupSavingsTotal(g.id))}</td><td>${g.meeting_day||'—'}</td></tr>`;
           }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No groups assigned</h4></div></td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3>My Active Loans</h3><div class="sub">${myLoans.length} active loans</div></div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Member</th><th>Asset</th><th class="num">Loan Value</th><th class="num">Outstanding Balance</th></tr></thead>
+        <tbody>
+          ${myLoans.map(l=>{
+            const mem = state.data.members.find(x=>x.id===l.member_id);
+            const outstanding = Math.max(0, Number(l.total_payable||0) - loanPaid(l.id));
+            return `<tr>
+              <td><b>${mem?.full_name||'—'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
+              <td>${l.asset_name}</td>
+              <td class="num">${KES(l.loan_value)}</td>
+              <td class="num" style="color:var(--danger);font-weight:700">${KES(outstanding)}</td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
         </tbody>
       </table></div>
     </div>
@@ -1819,6 +1840,8 @@ async function submitWizard(){
 }
 
 function openMemberEdit(m){
+  // Fetch existing guarantor for this member
+  const existingGuarantor = state.data.guarantors.find(g => g.member_id === m.id) || {};
   modal({
     title:'Edit member',
     body:`<form id="me">
@@ -1829,8 +1852,15 @@ function openMemberEdit(m){
         <div class="field"><label>Occupation</label><input name="occupation" value="${m.occupation||''}" /></div>
         <div class="field"><label>Address</label><input name="address" value="${m.address||''}" /></div>
         <div class="field"><label>Group</label>
-          <select name="group_id">${state.data.groups.map(g=>`<option value="${g.id}" ${m.group_id===g.id?'selected':''}>${g.name}</option>`).join('')}</select>
+          <select name="group_id">${state.data.groups.map(g=>`<option value="${g.id}" ${m.group_id===g.id?'selected':''}}>${g.name}</option>`).join('')}</select>
         </div>
+      </div>
+      <div class="divider"></div>
+      <div style="font-weight:700;font-size:13px;margin-bottom:10px">Guarantor details</div>
+      <div class="grid-2">
+        <div class="field"><label>Guarantor Name</label><input id="me-g-name" value="${existingGuarantor.full_name||''}" placeholder="Full name" /></div>
+        <div class="field"><label>Guarantor Phone</label><input id="me-g-phone" value="${existingGuarantor.phone||''}" placeholder="07XX XXX XXX" /></div>
+        <div class="field"><label>Guarantor ID</label><input id="me-g-id" value="${existingGuarantor.national_id||''}" placeholder="National ID number" /></div>
       </div>
     </form>`,
     actions:[
@@ -1841,7 +1871,28 @@ function openMemberEdit(m){
         row.phone = normalisePhone(row.phone);
         const { error } = await sb.from('pb_members').update(row).eq('id', m.id);
         if(error) return toast(error.message,'error');
-        Object.assign(m, row); audit('update','pb_members',m.id);
+        Object.assign(m, row);
+        // Upsert guarantor if any field is provided
+        const gName = document.getElementById('me-g-name')?.value.trim();
+        const gPhone = normalisePhone(document.getElementById('me-g-phone')?.value||''  );
+        const gNatId = document.getElementById('me-g-id')?.value.trim();
+        if(gName || gPhone || gNatId){
+          const gRow = {
+            business_id: state.staff.business_id || null,
+            member_id: m.id, full_name: gName||'', phone: gPhone||null,
+            national_id: gNatId||null, position: 1
+          };
+          if(existingGuarantor.id){
+            const { error: ge } = await sb.from('pb_guarantors').update({ full_name: gRow.full_name, phone: gRow.phone, national_id: gRow.national_id }).eq('id', existingGuarantor.id);
+            if(ge) toast('Member saved, but guarantor update failed: '+ge.message,'warn');
+            else { Object.assign(existingGuarantor, gRow); }
+          } else {
+            const { data: newG, error: ge } = await sb.from('pb_guarantors').insert(gRow).select().single();
+            if(ge) toast('Member saved, but guarantor save failed: '+ge.message,'warn');
+            else state.data.guarantors.push(newG);
+          }
+        }
+        audit('update','pb_members',m.id);
         closeModal(); render(); toast('Member updated','success');
       }}
     ]
@@ -2443,6 +2494,21 @@ function loanActions(ev, id){
           },
           { title:'Mark as defaulted', danger:true }
         )
+      },
+      'sep',
+      { label:'🗑 Delete Loan', danger:true, onClick: ()=>confirmDialog(
+          'PERMANENTLY delete this active loan? All repayment records will remain but the loan will be removed from the system. This action cannot be undone.',
+          async()=>{
+            if(!(await ensureFreshToken())) return;
+            const { error } = await sb.from('pb_loans').delete().eq('id', id);
+            if(error) return toast('Delete failed: '+error.message, 'error');
+            state.data.loans = state.data.loans.filter(x=>x.id!==id);
+            audit('delete_loan','pb_loans',id,{ asset_name:l.asset_name, member_id:l.member_id, loan_value:l.loan_value },null);
+            render();
+            toast('Loan deleted and action logged.','warn');
+          },
+          { title:'Delete Active Loan', danger:true }
+        )
       }
     ] : [])
   ]);
@@ -2619,18 +2685,22 @@ function updateWeeklyRateDisplay(val){
 function computeSchedule(principal, weekly, method, startDate){
   const monthlyRate = Number(state.settings?.monthly_interest_rate || 0.025);
   const weeklyRate = monthlyRate * 12 / 52;
-  const HARD_CAP = 520; // 10 years absolute max to prevent infinite loop
+  const HARD_CAP = 156; // 3 years absolute max to prevent infinite loop / compounding bloat
   const rows = [];
   if(method === 'flat'){
-    let weeks = Math.max(1, Math.ceil(principal / Math.max(1, weekly - principal*weeklyRate)));
-    if(!isFinite(weeks) || weeks<1 || weeks>HARD_CAP) weeks = HARD_CAP;
-    let totalInterest = principal * weeklyRate * weeks;
+    // Safe baseline: derive weeks from a single-pass flat-rate total payable.
+    // We calculate interest on the baseline weeks first, then use Math.ceil(totalPayable/weekly)
+    // capped at HARD_CAP to avoid astronomical compounding when weekly is too low.
+    const baseWeeks = Math.min(HARD_CAP, Math.max(1, Math.ceil(principal / Math.max(1, weekly))));
+    let totalInterest = principal * weeklyRate * baseWeeks;
     let totalPayable = principal + totalInterest;
-    let inst = weekly > 0 ? weekly : totalPayable / weeks;
-    weeks = Math.min(HARD_CAP, Math.ceil(totalPayable / inst));
+    // Recalculate weeks from actual total payable using weekly as denominator
+    let weeks = weekly > 0 ? Math.min(HARD_CAP, Math.ceil(totalPayable / weekly)) : HARD_CAP;
+    if(!isFinite(weeks) || weeks < 1) weeks = HARD_CAP;
+    // Recompute interest and payable for the final week count
     totalInterest = principal * weeklyRate * weeks;
     totalPayable = principal + totalInterest;
-    inst = totalPayable / weeks;
+    const inst = totalPayable / weeks;
     let bal = totalPayable;
     const principalPerWk = principal / weeks;
     const interestPerWk = totalInterest / weeks;
