@@ -3067,9 +3067,16 @@ function openOrderForm(){
         <div id="ord-ast-sel" class="muted" style="font-size:12px;margin-top:4px"></div>
       </div>
       <div class="grid-2">
-        <div class="field"><label>Quantity</label><input type="number" min="1" id="ord-qty" value="1" /></div>
+        <div class="field"><label>Quantity</label><input type="number" min="1" id="ord-qty" value="1" oninput="ordCalcLoanTerms()" /></div>
         <div class="field"><label>Order date</label><input type="date" id="ord-date" value="${todayISO()}" /></div>
       </div>
+      <div class="divider" style="margin:10px 0 14px"></div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:10px">Desired Loan Terms</div>
+      <div class="grid-2">
+        <div class="field"><label>Desired Number of Weeks</label><input id="ord-weeks" type="number" min="1" max="52" placeholder="e.g. 10" oninput="ordCalcFromWeeks()" /></div>
+        <div class="field"><label>Desired Weekly Installment (KES)</label><input id="ord-wi" type="number" min="1" placeholder="e.g. 500" oninput="ordCalcFromInstallment()" /></div>
+      </div>
+      <div id="ord-loan-out" class="muted" style="font-size:12px;margin-bottom:10px"></div>
       <div class="field"><label>Notes</label><textarea id="ord-notes" rows="2"></textarea></div>
     `,
     actions:[
@@ -3085,11 +3092,14 @@ function openOrderForm(){
         if(!memberEligible(member.id)){
           if(!confirm(`This member has not yet reached the savings eligibility threshold of ${KES(state.settings?.savings_threshold||900)}. Submit order anyway?`)) return;
         }
+        const desiredWeeks = Number($('ord-weeks').value)||null;
+        const desiredWeekly = Number($('ord-wi').value)||null;
         const ins = {
           business_id: state.staff.business_id || null,
           member_id: member.id, group_id: member.group_id, asset_id: asset.id, asset_name: asset.name,
           quantity: Number($('ord-qty').value)||1, ordered_on: $('ord-date').value, status:'pending',
-          recorded_by: state.staff.id, notes: $('ord-notes').value||null
+          recorded_by: state.staff.id, notes: $('ord-notes').value||null,
+          desired_weeks: desiredWeeks, desired_weekly_installment: desiredWeekly
         };
         const { data, error } = await sb.from('pb_orders').insert(ins).select().single();
         if(error) return toast(error.message,'error');
@@ -3106,6 +3116,54 @@ function openOrderForm(){
       if(!e.target.closest('#ord-ast-list') && e.target.id!=='ord-ast-search') { const el=$('ord-ast-list'); if(el) el.style.display='none'; }
     });
   }, 50);
+}
+function _ordGetPrincipal(){
+  const assetId = $('ord-ast-id')?.value;
+  const asset = state.data.inventory.find(x=>x.id===assetId);
+  const qty = Number($('ord-qty')?.value)||1;
+  return asset ? asset.loan_price * qty : 0;
+}
+let _ordUpdating = false;
+function ordCalcFromWeeks(){
+  if(_ordUpdating) return; _ordUpdating = true;
+  const weeks = Number($('ord-weeks')?.value)||0;
+  const principal = _ordGetPrincipal();
+  if(weeks > 0 && principal > 0){
+    const rate = state.settings?.monthly_interest_rate || 0.025;
+    const weeklyRate = (rate * 12) / 52;
+    const totalPayable = principal * (1 + weeklyRate * weeks);
+    $('ord-wi').value = Math.ceil(totalPayable / weeks);
+  }
+  _ordUpdating = false;
+  ordUpdateSummary();
+}
+function ordCalcFromInstallment(){
+  if(_ordUpdating) return; _ordUpdating = true;
+  const weekly = Number($('ord-wi')?.value)||0;
+  const principal = _ordGetPrincipal();
+  if(weekly > 0 && principal > 0){
+    const r = computeSchedule(principal, weekly, 'flat', new Date());
+    $('ord-weeks').value = r.weeks;
+  }
+  _ordUpdating = false;
+  ordUpdateSummary();
+}
+function ordCalcLoanTerms(){
+  // Re-derive from whichever field was last populated
+  const weeks = Number($('ord-weeks')?.value)||0;
+  const wi = Number($('ord-wi')?.value)||0;
+  if(weeks > 0) ordCalcFromWeeks();
+  else if(wi > 0) ordCalcFromInstallment();
+  else ordUpdateSummary();
+}
+function ordUpdateSummary(){
+  const out = $('ord-loan-out'); if(!out) return;
+  const principal = _ordGetPrincipal();
+  const wi = Number($('ord-wi')?.value)||0;
+  if(!principal || !wi){ out.innerHTML = principal ? `Loan value: <b>${KES(principal)}</b> — enter weeks or weekly installment above to see a repayment summary.` : ''; return; }
+  const r = computeSchedule(principal, wi, 'flat', new Date());
+  const over52 = r.weeks > 52;
+  out.innerHTML = `Loan value ${KES(principal)} · Total payable ${KES(r.totalPayable)} · Interest ${KES(r.totalInterest)} · ${r.weeks} weeks${over52?' <span style="color:var(--danger);font-weight:600">(exceeds 52-week limit)</span>':''}`;
 }
 function filterOrderMembers(){
   const q = ($('ord-mem-search').value||'').toLowerCase();
@@ -3135,6 +3193,7 @@ function selectOrderAsset(id, name, price, stock){
   $('ord-ast-search').value = name;
   $('ord-ast-sel').textContent = '✓ '+name+' · '+KES(price)+' · stock: '+stock;
   $('ord-ast-list').style.display = 'none';
+  ordCalcLoanTerms();
 }
 function rejectOrder(o){
   modal({
@@ -3165,8 +3224,8 @@ function approveOrder(o){
       </table>
       <div class="divider"></div>
       <div class="grid-2">
-        <div class="field"><label>Desired Number of Weeks</label><input id="al-weeks" type="number" min="1" max="52" placeholder="e.g. 10" /></div>
-        <div class="field"><label>Weekly Installment (KES)</label><input id="wi" type="number" min="1" placeholder="e.g. 500" /></div>
+        <div class="field"><label>Desired Number of Weeks</label><input id="al-weeks" type="number" min="1" max="52" placeholder="e.g. 10" value="${o.desired_weeks||''}" /></div>
+        <div class="field"><label>Weekly Installment (KES)</label><input id="wi" type="number" min="1" placeholder="e.g. 500" value="${o.desired_weekly_installment||''}" /></div>
       </div>
       <div class="field"><label>Loan start date</label><input id="sd" type="date" value="${todayISO()}" /></div>
       <div id="al-out" class="muted" style="font-size:12px"></div>
@@ -3244,6 +3303,8 @@ function approveOrder(o){
     $('al-weeks').addEventListener('input', updFromWeeks);
     $('wi').addEventListener('input', updFromInstallment);
     $('sd').addEventListener('change', updSummary);
+    // Show summary immediately if values were pre-filled from the order
+    updSummary();
   }, 50);
 }
 
