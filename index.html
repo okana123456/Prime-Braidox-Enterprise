@@ -1186,8 +1186,8 @@ function pageDashboard(){
   const officers = state.data.staff.filter(s => s.role==='officer' && s.status==='active');
   const todayISO_ = todayISO();
   const officerPerf = officers.map(o => {
-    const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRange(s.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
-    const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRange(r.meeting_date||'')).reduce((a,b)=>a+Number(b.amount||0),0);
+    const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRangeFallback(s.meeting_date||'', s.created_at)).reduce((a,b)=>a+Number(b.amount||0),0);
+    const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRangeFallback(r.meeting_date||'', r.created_at)).reduce((a,b)=>a+Number(b.amount||0),0);
     const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
     const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
     return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday };
@@ -2689,17 +2689,15 @@ function computeSchedule(principal, weekly, method, startDate){
   const HARD_CAP = 156; // 3 years absolute max to prevent infinite loop / compounding bloat
   const rows = [];
   if(method === 'flat'){
-    // Safe baseline: derive weeks from a single-pass flat-rate total payable.
-    // We calculate interest on the baseline weeks first, then use Math.ceil(totalPayable/weekly)
-    // capped at HARD_CAP to avoid astronomical compounding when weekly is too low.
-    const baseWeeks = Math.min(HARD_CAP, Math.max(1, Math.ceil(principal / Math.max(1, weekly))));
-    let totalInterest = principal * weeklyRate * baseWeeks;
+    // Company formula: totalInterest = principal * weeklyRate * (principal / weeklyInstallment)
+    // This derives the number of periods directly from principal/installment ratio.
+    let totalInterest = weekly > 0 ? principal * weeklyRate * (principal / weekly) : principal * weeklyRate * HARD_CAP;
     let totalPayable = principal + totalInterest;
-    // Recalculate weeks from actual total payable using weekly as denominator
+    // Derive weeks from total payable, capped at HARD_CAP to prevent infinite loops
     let weeks = weekly > 0 ? Math.min(HARD_CAP, Math.ceil(totalPayable / weekly)) : HARD_CAP;
     if(!isFinite(weeks) || weeks < 1) weeks = HARD_CAP;
-    // Recompute interest and payable for the final week count
-    totalInterest = principal * weeklyRate * weeks;
+    // Recompute with final week count
+    totalInterest = principal * weeklyRate * (principal / weekly);
     totalPayable = principal + totalInterest;
     const inst = totalPayable / weeks;
     let bal = totalPayable;
@@ -3044,7 +3042,89 @@ function orderActions(ev, id){
   if(!items.length){ items.push({ label:'View', onClick: ()=>{} }); }
   showActMenu(ev, items);
 }
+// _orderLines holds line items for the order form: [{ asset_id, asset_name, loan_price, stock, quantity }]
+let _orderLines = [];
+
+function _renderOrderLines(){
+  const container = document.getElementById('ord-lines-container');
+  if(!container) return;
+  container.innerHTML = _orderLines.map((line, i) => `
+    <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:8px;position:relative" id="ord-line-${i}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Asset ${i+1}</div>
+        ${_orderLines.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 6px" onclick="_removeOrderLine(${i})">✕ Remove</button>` : ''}
+      </div>
+      <div class="field" style="margin-bottom:8px">
+        <div class="search-box" style="position:relative">
+          <input id="ord-ast-search-${i}" placeholder="Search asset…" autocomplete="off" style="padding-left:34px" oninput="_filterOrderAssets(${i})" onfocus="_filterOrderAssets(${i})" value="${line.asset_name||''}" />
+          <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
+        </div>
+        <div id="ord-ast-list-${i}" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
+        ${line.asset_name ? `<div class="muted" style="font-size:11px;margin-top:3px">✓ ${line.asset_name} · ${KES(line.loan_price||0)} · stock: ${line.stock||0}</div>` : ''}
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label style="font-size:11px">Quantity</label>
+        <input type="number" min="1" value="${line.quantity||1}" style="width:100px" oninput="_updateOrderLineQty(${i}, this.value)" />
+      </div>
+    </div>
+  `).join('');
+  _updateOrderTotalSummary();
+}
+
+function _filterOrderAssets(lineIdx){
+  const input = document.getElementById(`ord-ast-search-${lineIdx}`);
+  const list = document.getElementById(`ord-ast-list-${lineIdx}`);
+  if(!input || !list) return;
+  const q = (input.value||'').toLowerCase();
+  const matches = state.data.inventory.filter(a=>a.name.toLowerCase().includes(q)).slice(0,10);
+  list.style.display = matches.length ? 'block' : 'none';
+  list.innerHTML = matches.map(a=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="_selectOrderLineAsset(${lineIdx},'${a.id}','${a.name.replace(/'/g,"\\'")}',${a.loan_price},${a.stock})">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">${KES(a.loan_price)} · stock ${a.stock}</span></div>`).join('');
+}
+
+function _selectOrderLineAsset(lineIdx, id, name, price, stock){
+  if(!_orderLines[lineIdx]) return;
+  _orderLines[lineIdx].asset_id = id;
+  _orderLines[lineIdx].asset_name = name;
+  _orderLines[lineIdx].loan_price = price;
+  _orderLines[lineIdx].stock = stock;
+  _renderOrderLines();
+  setTimeout(()=>{ const el = document.getElementById(`ord-ast-list-${lineIdx}`); if(el) el.style.display='none'; },50);
+}
+
+function _updateOrderLineQty(lineIdx, val){
+  if(!_orderLines[lineIdx]) return;
+  _orderLines[lineIdx].quantity = Math.max(1, parseInt(val)||1);
+  _updateOrderTotalSummary();
+}
+
+function _removeOrderLine(lineIdx){
+  _orderLines.splice(lineIdx, 1);
+  _renderOrderLines();
+}
+
+function _addOrderLine(){
+  _orderLines.push({ asset_id:'', asset_name:'', loan_price:0, stock:0, quantity:1 });
+  _renderOrderLines();
+  // Attach outside-click dismissal for new line
+  setTimeout(()=>{
+    const i = _orderLines.length - 1;
+    document.addEventListener('click', e=>{
+      const list = document.getElementById(`ord-ast-list-${i}`);
+      if(list && !e.target.closest(`#ord-ast-list-${i}`) && e.target.id!==`ord-ast-search-${i}`) list.style.display='none';
+    });
+  },50);
+}
+
+function _updateOrderTotalSummary(){
+  const out = document.getElementById('ord-loan-out'); if(!out) return;
+  const principal = _orderLines.reduce((a,l)=>a+(Number(l.loan_price||0)*Number(l.quantity||1)),0);
+  const wi = Number(document.getElementById('ord-wi')?.value)||0;
+  if(!principal){ out.innerHTML=''; return; }
+  out.innerHTML = `Total loan value: <b>${KES(principal)}</b>${wi ? ` · Total payable ${KES(computeSchedule(principal,wi,'flat',new Date()).totalPayable)}` : ' — enter desired installment to see repayment summary.'}`;
+}
+
 function openOrderForm(){
+  _orderLines = [{ asset_id:'', asset_name:'', loan_price:0, stock:0, quantity:1 }];
   modal({
     title:'New member order',
     body:`
@@ -3057,19 +3137,12 @@ function openOrderForm(){
         <input type="hidden" id="ord-mem-id" />
         <div id="ord-mem-sel" class="muted" style="font-size:12px;margin-top:4px"></div>
       </div>
-      <div class="field"><label>Asset *</label>
-        <div class="search-box" style="position:relative">
-          <input id="ord-ast-search" placeholder="Type asset name…" autocomplete="off" style="padding-left:34px" oninput="filterOrderAssets()" />
-          <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
-        </div>
-        <div id="ord-ast-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
-        <input type="hidden" id="ord-ast-id" />
-        <div id="ord-ast-sel" class="muted" style="font-size:12px;margin-top:4px"></div>
-      </div>
-      <div class="grid-2">
-        <div class="field"><label>Quantity</label><input type="number" min="1" id="ord-qty" value="1" oninput="ordCalcLoanTerms()" /></div>
-        <div class="field"><label>Order date</label><input type="date" id="ord-date" value="${todayISO()}" /></div>
-      </div>
+
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">Assets *</div>
+      <div id="ord-lines-container"></div>
+      <button type="button" class="btn btn-outline btn-sm" style="margin-bottom:14px" onclick="_addOrderLine()">+ Add Asset</button>
+
+      <div class="field"><label>Order date</label><input type="date" id="ord-date" value="${todayISO()}" /></div>
       <div class="divider" style="margin:10px 0 14px"></div>
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:10px">Desired Loan Terms</div>
       <div class="grid-2">
@@ -3084,21 +3157,35 @@ function openOrderForm(){
       { label:'Submit order', cls:'btn-primary', onClick: async () => {
         if(!(await ensureFreshToken())) return;
         const member_id = $('ord-mem-id').value;
-        const asset_id = $('ord-ast-id').value;
         const member = state.data.members.find(x=>x.id===member_id);
-        const asset = state.data.inventory.find(x=>x.id===asset_id);
         if(!member) return toast('Please select a member.','error');
-        if(!asset) return toast('Please select an asset.','error');
+
+        const validLines = _orderLines.filter(l=>l.asset_id && Number(l.quantity)>0);
+        if(!validLines.length) return toast('Please select at least one asset.','error');
+
         if(!memberEligible(member.id)){
           if(!confirm(`This member has not yet reached the savings eligibility threshold of ${KES(state.settings?.savings_threshold||900)}. Submit order anyway?`)) return;
         }
+
+        // Combine asset names into a single string e.g. "Sofa (x1), Mattress (x2)"
+        const asset_name = validLines.map(l=>`${l.asset_name} (x${l.quantity})`).join(', ');
+        const totalQuantity = validLines.reduce((a,l)=>a+Number(l.quantity),0);
+        // Use the first asset's id for backward compatibility; full data goes into notes JSON
+        const primaryAsset = validLines[0];
+
         const desiredWeeks = Number($('ord-weeks').value)||null;
         const desiredWeekly = Number($('ord-wi').value)||null;
+        const userNotes = $('ord-notes').value||'';
+
+        // Save asset line items as JSON in the notes field, appending any user notes
+        const notesPayload = JSON.stringify({ assets: validLines.map(l=>({ asset_id:l.asset_id, asset_name:l.asset_name, loan_price:l.loan_price, stock:l.stock, quantity:l.quantity })), user_notes: userNotes });
+
         const ins = {
           business_id: state.staff.business_id || null,
-          member_id: member.id, group_id: member.group_id, asset_id: asset.id, asset_name: asset.name,
-          quantity: Number($('ord-qty').value)||1, ordered_on: $('ord-date').value, status:'pending',
-          recorded_by: state.staff.id, notes: $('ord-notes').value||null,
+          member_id: member.id, group_id: member.group_id,
+          asset_id: primaryAsset.asset_id, asset_name,
+          quantity: totalQuantity, ordered_on: $('ord-date').value, status:'pending',
+          recorded_by: state.staff.id, notes: notesPayload,
           desired_weeks: desiredWeeks, desired_weekly_installment: desiredWeekly
         };
         const { data, error } = await sb.from('pb_orders').insert(ins).select().single();
@@ -3109,19 +3196,16 @@ function openOrderForm(){
     ]
   });
   setTimeout(()=>{
+    _renderOrderLines();
     $('ord-mem-search').addEventListener('focus', filterOrderMembers);
-    $('ord-ast-search').addEventListener('focus', filterOrderAssets);
     document.addEventListener('click', e => {
       if(!e.target.closest('#ord-mem-list') && e.target.id!=='ord-mem-search') { const el=$('ord-mem-list'); if(el) el.style.display='none'; }
-      if(!e.target.closest('#ord-ast-list') && e.target.id!=='ord-ast-search') { const el=$('ord-ast-list'); if(el) el.style.display='none'; }
     });
   }, 50);
 }
 function _ordGetPrincipal(){
-  const assetId = $('ord-ast-id')?.value;
-  const asset = state.data.inventory.find(x=>x.id===assetId);
-  const qty = Number($('ord-qty')?.value)||1;
-  return asset ? asset.loan_price * qty : 0;
+  // Sum across all order lines
+  return _orderLines.reduce((a,l)=>a+(Number(l.loan_price||0)*Number(l.quantity||1)),0);
 }
 let _ordUpdating = false;
 function ordCalcFromWeeks(){
@@ -3157,13 +3241,7 @@ function ordCalcLoanTerms(){
   else ordUpdateSummary();
 }
 function ordUpdateSummary(){
-  const out = $('ord-loan-out'); if(!out) return;
-  const principal = _ordGetPrincipal();
-  const wi = Number($('ord-wi')?.value)||0;
-  if(!principal || !wi){ out.innerHTML = principal ? `Loan value: <b>${KES(principal)}</b> — enter weeks or weekly installment above to see a repayment summary.` : ''; return; }
-  const r = computeSchedule(principal, wi, 'flat', new Date());
-  const over52 = r.weeks > 52;
-  out.innerHTML = `Loan value ${KES(principal)} · Total payable ${KES(r.totalPayable)} · Interest ${KES(r.totalInterest)} · ${r.weeks} weeks${over52?' <span style="color:var(--danger);font-weight:600">(exceeds 52-week limit)</span>':''}`;
+  _updateOrderTotalSummary();
 }
 function filterOrderMembers(){
   const q = ($('ord-mem-search').value||'').toLowerCase();
@@ -3210,18 +3288,57 @@ function rejectOrder(o){
   });
 }
 function approveOrder(o){
-  const asset = state.data.inventory.find(x=>x.id===o.asset_id);
   const member = state.data.members.find(x=>x.id===o.member_id);
-  if(!asset || !member) return toast('Order references missing asset or member.','error');
-  if(asset.stock < o.quantity) return toast('Insufficient stock to fulfill this order.','error');
-  const principal = asset.loan_price * o.quantity;
+  if(!member) return toast('Order references missing member.','error');
+
+  // === Fix 5: Parse multi-asset line items from notes JSON ===
+  let assetLines = null;
+  if(o.notes){
+    try {
+      const parsed = JSON.parse(o.notes);
+      if(parsed && Array.isArray(parsed.assets) && parsed.assets.length) {
+        assetLines = parsed.assets;
+      }
+    } catch(e){ /* legacy order — fall back to single-asset */ }
+  }
+
+  // Build resolved lines array with live inventory objects
+  let resolvedLines = [];
+  if(assetLines){
+    for(const line of assetLines){
+      const asset = state.data.inventory.find(x=>x.id===line.asset_id);
+      if(!asset) return toast(`Asset "${line.asset_name}" not found in inventory.`,'error');
+      if(asset.stock < Number(line.quantity)) return toast(`Insufficient stock for "${asset.name}" (need ${line.quantity}, have ${asset.stock}).`,'error');
+      resolvedLines.push({ asset, quantity: Number(line.quantity), loan_price: Number(line.loan_price||asset.loan_price) });
+    }
+  } else {
+    // Legacy single-asset order
+    const asset = state.data.inventory.find(x=>x.id===o.asset_id);
+    if(!asset) return toast('Order references missing asset.','error');
+    if(asset.stock < o.quantity) return toast('Insufficient stock to fulfill this order.','error');
+    resolvedLines.push({ asset, quantity: Number(o.quantity), loan_price: Number(asset.loan_price) });
+  }
+
+  const principal = resolvedLines.reduce((a,l)=>a+(l.loan_price*l.quantity),0);
+
+  // === Fix 4: 25% deposit for loans > 20,000 ===
+  const requiresDeposit = principal > 20000;
+  const depositAmount = requiresDeposit ? Math.round(principal * 0.25) : 0;
+
+  const assetSummaryRows = resolvedLines.map(l=>`<tr><td>${l.asset.name} × ${l.quantity}</td><td><b>${KES(l.loan_price*l.quantity)}</b></td></tr>`).join('');
+
   modal({
     title:`Approve & issue loan — ${member.full_name}`,
     body:`<form id="al">
       <table class="summary-table">
-        <tr><td>Asset</td><td>${asset.name} × ${o.quantity}</td></tr>
-        <tr><td>Loan value</td><td><b>${KES(principal)}</b></td></tr>
+        ${assetSummaryRows}
+        <tr><td>Total loan value</td><td><b>${KES(principal)}</b></td></tr>
       </table>
+      ${requiresDeposit ? `
+      <div style="background:var(--warning-50);border:1px solid var(--warning);border-radius:var(--radius-sm);padding:12px 14px;margin:12px 0;font-size:13px">
+        <div style="font-weight:700;color:var(--warning);margin-bottom:4px">⚠️ Deposit Required</div>
+        <div>A <b>25% deposit of ${KES(depositAmount)}</b> is required for loans over KES 20,000. This will be recorded as an immediate upfront repayment when the loan is issued.</div>
+      </div>` : ''}
       <div class="divider"></div>
       <div class="grid-2">
         <div class="field"><label>Desired Number of Weeks</label><input id="al-weeks" type="number" min="1" max="52" placeholder="e.g. 10" value="${o.desired_weeks||''}" /></div>
@@ -3239,27 +3356,54 @@ function approveOrder(o){
         const start = new Date($('sd').value);
         if(weekly <= 0) return toast('Weekly installment must be greater than zero.','error');
         const r = computeSchedule(principal, weekly, 'flat', start);
-        // Enforce 52-week safety limit
         const effectiveWeeks = weeksInput > 0 ? weeksInput : r.weeks;
         if(effectiveWeeks > 52 || r.weeks > 52){
           return toast('The maximum allowed loan term is 52 weeks (1 year). Please increase the weekly payment or reduce the weeks.','error');
         }
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
+        // Use primary asset for loan record fields
+        const primaryLine = resolvedLines[0];
         const loan = {
           business_id: state.staff.business_id || null,
           member_id: member.id, group_id: member.group_id, officer_id: state.staff.id,
-          order_id: o.id, asset_id: asset.id, asset_name: asset.name, asset_quantity: o.quantity,
+          order_id: o.id, asset_id: primaryLine.asset.id, asset_name: o.asset_name,
+          asset_quantity: resolvedLines.reduce((a,l)=>a+l.quantity,0),
           loan_value: principal, weekly_installment: weekly, total_payable: r.totalPayable,
           start_date: $('sd').value, expected_end_date: end.toISOString().slice(0,10), status:'active'
         };
-        const { data, error } = await sb.from('pb_loans').insert(loan).select().single();
-        if(error) return toast('Loan save failed: '+error.message,'error');
-        await sb.from('pb_inventory').update({ stock: asset.stock - o.quantity }).eq('id', asset.id);
-        asset.stock -= o.quantity;
+        const { data: loanData, error: loanErr } = await sb.from('pb_loans').insert(loan).select().single();
+        if(loanErr) return toast('Loan save failed: '+loanErr.message,'error');
+
+        // === Fix 5: Deduct stock for each asset line individually ===
+        for(const line of resolvedLines){
+          await sb.from('pb_inventory').update({ stock: line.asset.stock - line.quantity }).eq('id', line.asset.id);
+          line.asset.stock -= line.quantity;
+        }
+
         await sb.from('pb_orders').update({ status:'fulfilled', approved_by: state.staff.id }).eq('id', o.id);
         Object.assign(o, { status:'fulfilled', approved_by: state.staff.id });
-        state.data.loans.unshift(data); audit('loan_issue','pb_loans',data.id,null,loan);
-        closeModal(); render(); toast('Loan issued and stock deducted','success');
+        state.data.loans.unshift(loanData);
+        audit('loan_issue','pb_loans',loanData.id,null,loan);
+
+        // === Fix 4: Insert deposit repayment if principal > 20,000 ===
+        if(requiresDeposit && depositAmount > 0){
+          const interestRatio = r.totalPayable > 0 ? (r.totalPayable - principal) / r.totalPayable : 0;
+          const depositInterest = +(depositAmount * interestRatio).toFixed(2);
+          const depositPrincipal = +(depositAmount - depositInterest).toFixed(2);
+          const dep = {
+            business_id: state.staff.business_id || null,
+            loan_id: loanData.id, member_id: member.id, group_id: member.group_id,
+            recorded_by: state.staff.id,
+            amount: depositAmount, principal: depositPrincipal, interest: depositInterest,
+            meeting_date: $('sd').value,
+            notes: 'Auto-recorded 25% upfront deposit (loan > KES 20,000)'
+          };
+          const { error: depErr } = await sb.from('pb_repayments').insert(dep).select().single();
+          if(depErr) toast('Deposit repayment record failed: '+depErr.message,'warn');
+          else audit('deposit_repayment','pb_repayments',loanData.id,null,dep);
+        }
+
+        closeModal(); render(); toast('Loan issued and stock deducted'+(requiresDeposit?' — deposit recorded':''),'success');
       }}
     ]
   });
@@ -3269,8 +3413,6 @@ function approveOrder(o){
       if(_updating) return; _updating = true;
       const weeks = Number($('al-weeks').value)||0;
       if(weeks > 0){
-        // Calculate weekly installment needed to clear principal+interest in given weeks
-        // Use flat rate: totalPayable = principal * (1 + rate * weeks/52), installment = totalPayable / weeks
         const rate = state.settings?.monthly_interest_rate || 0.025;
         const annualRate = rate * 12;
         const weeklyRate = annualRate / 52;
@@ -3303,7 +3445,6 @@ function approveOrder(o){
     $('al-weeks').addEventListener('input', updFromWeeks);
     $('wi').addEventListener('input', updFromInstallment);
     $('sd').addEventListener('change', updSummary);
-    // Show summary immediately if values were pre-filled from the order
     updSummary();
   }, 50);
 }
@@ -4314,6 +4455,7 @@ function pageAccounting(){
   // === LOANS ISSUED ===
   const loansIssued = state.data.loans.filter(l=>inRange(l.start_date||''));
   const totalLoansOut = loansIssued.reduce((a,b)=>a+Number(b.loan_value||0),0);
+  const totalExpectedReturn = loansIssued.reduce((a,b)=>a+Number(b.total_payable||0),0);
 
   // === OPERATIONAL EXPENSES ===
   const expensesInPeriod = (state.data.expenses||[]).filter(e=>inRange(e.date||''));
@@ -4355,7 +4497,8 @@ function pageAccounting(){
       <div class="kpi k-success"><div class="l">Savings collected</div><div class="v">${KES(totalSavingsIn)}</div><div class="d">${savingsInPeriod.length} entries</div></div>
       <div class="kpi k-primary"><div class="l">Loan repayments</div><div class="v">${KES(totalRepayIn)}</div><div class="d">Interest ${KES(totalInterestIn)}</div></div>
       <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${membersRegisteredInPeriod.length} new member${membersRegisteredInPeriod.length!==1?'s':''}</div></div>
-      <div class="kpi k-warn"><div class="l">Loans issued (cash out)</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
+      <div class="kpi k-warn"><div class="l">Principal disbursed</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
+      <div class="kpi k-primary"><div class="l">Expected return</div><div class="v">${KES(totalExpectedReturn)}</div><div class="d">Interest: ${KES(totalExpectedReturn-totalLoansOut)}</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
       <div class="kpi k-danger"><div class="l">Operational Expenses</div><div class="v">${KES(totalExpensesOut)}</div><div class="d">${expensesInPeriod.length} entr${expensesInPeriod.length!==1?'ies':'y'}</div></div>
     </div>
