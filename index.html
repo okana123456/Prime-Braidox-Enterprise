@@ -630,7 +630,7 @@ async function signOut(){
 async function loadSettings(){
   const settingsId = state.staff?.business_id ? ('biz_' + state.staff.business_id) : 'main';
   const { data } = await sb.from('pb_settings').select('*').eq('id', settingsId).maybeSingle();
-  state.settings = data || { savings_threshold:900, registration_fee:200, max_loan_weeks:52, monthly_interest_rate:0.025, business_name:'Prime Braidox Enterprise' };
+  state.settings = data || { savings_threshold:900, registration_fee:200, max_loan_weeks:48, monthly_interest_rate:2.5, business_name:'Prime Braidox Enterprise' };
   lsSet('settings', state.settings);
 }
 
@@ -2648,7 +2648,7 @@ function runCalc(){
   const method = $('c-method').value;
   const start = new Date($('c-start').value);
   const r = computeSchedule(amount, weekly, method, start);
-  const tooLong = r.weeks > (state.settings?.max_loan_weeks || 52);
+  const tooLong = r.weeks > (state.settings?.max_loan_weeks || 48);
   $('calc-out').innerHTML = `
     <div class="card card-pad">
       <h3 style="margin:0 0 12px">Result</h3>
@@ -2659,7 +2659,7 @@ function runCalc(){
         <tr><td>Weeks to complete</td><td>${r.weeks}</td></tr>
         <tr><td>Suggested weekly installment</td><td>${KES(r.suggestedWeekly)}</td></tr>
       </table>
-      ${tooLong ? `<div class="auth-error" style="margin-top:12px">Repayment exceeds the maximum loan term of ${state.settings?.max_loan_weeks||52} weeks. Consider increasing the weekly amount to at least ${KES(r.suggestedWeekly)}.</div>`:''}
+      ${tooLong ? `<div class="auth-error" style="margin-top:12px">Repayment exceeds the maximum loan term of ${state.settings?.max_loan_weeks||48} weeks. Consider increasing the weekly amount to at least ${KES(r.suggestedWeekly)}.</div>`:''}
     </div>
     <div class="card" style="margin-top:14px">
       <div class="card-head"><h3>Week-by-week schedule</h3></div>
@@ -2673,19 +2673,18 @@ function runCalc(){
   `;
 }
 function updateWeeklyRateDisplay(val){
-  const monthly = parseFloat(val) || 0;
-  const weekly = monthly * 12 / 52;
-  const weeklyPct = (weekly * 100).toFixed(4);
-  const exInterest = weekly * 10000;
+  const monthlyPct = parseFloat(val) || 0;
+  const weeklyPct = monthlyPct / 4;
+  const exInterest = (weeklyPct / 100) * 10000;
   const el = document.getElementById('weekly_rate_val');
   const ex = document.getElementById('weekly_interest_ex');
-  if(el) el.textContent = weeklyPct + '%';
+  if(el) el.textContent = weeklyPct.toFixed(4) + '%';
   if(ex) ex.textContent = KES(exInterest);
 }
 
 function computeSchedule(principal, weekly, method, startDate){
-  const monthlyRate = Number(state.settings?.monthly_interest_rate || 0.025);
-  const weeklyRate = monthlyRate * 12 / 52;
+  const monthlyRate = Number(state.settings?.monthly_interest_rate || 2.5) / 100;
+  const weeklyRate = monthlyRate / 4;
   const HARD_CAP = 156; // 3 years absolute max to prevent infinite loop / compounding bloat
   const rows = [];
   if(method === 'flat'){
@@ -3146,7 +3145,7 @@ function openOrderForm(){
       <div class="divider" style="margin:10px 0 14px"></div>
       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:10px">Desired Loan Terms</div>
       <div class="grid-2">
-        <div class="field"><label>Desired Number of Weeks</label><input id="ord-weeks" type="number" min="1" max="52" placeholder="e.g. 10" oninput="ordCalcFromWeeks()" /></div>
+        <div class="field"><label>Desired Number of Weeks</label><input id="ord-weeks" type="number" min="1" max="48" placeholder="e.g. 10" oninput="ordCalcFromWeeks()" /></div>
         <div class="field"><label>Desired Weekly Installment (KES)</label><input id="ord-wi" type="number" min="1" placeholder="e.g. 500" oninput="ordCalcFromInstallment()" /></div>
       </div>
       <div id="ord-loan-out" class="muted" style="font-size:12px;margin-bottom:10px"></div>
@@ -3213,8 +3212,8 @@ function ordCalcFromWeeks(){
   const weeks = Number($('ord-weeks')?.value)||0;
   const principal = _ordGetPrincipal();
   if(weeks > 0 && principal > 0){
-    const rate = state.settings?.monthly_interest_rate || 0.025;
-    const weeklyRate = (rate * 12) / 52;
+    const rate = state.settings?.monthly_interest_rate || 2.5;
+    const weeklyRate = (rate / 100) / 4;
     const totalPayable = principal * (1 + weeklyRate * weeks);
     $('ord-wi').value = Math.ceil(totalPayable / weeks);
   }
@@ -3341,7 +3340,7 @@ function approveOrder(o){
       </div>` : ''}
       <div class="divider"></div>
       <div class="grid-2">
-        <div class="field"><label>Desired Number of Weeks</label><input id="al-weeks" type="number" min="1" max="52" placeholder="e.g. 10" value="${o.desired_weeks||''}" /></div>
+        <div class="field"><label>Desired Number of Weeks</label><input id="al-weeks" type="number" min="1" max="48" placeholder="e.g. 10" value="${o.desired_weeks||''}" /></div>
         <div class="field"><label>Weekly Installment (KES)</label><input id="wi" type="number" min="1" placeholder="e.g. 500" value="${o.desired_weekly_installment||''}" /></div>
       </div>
       <div class="field"><label>Loan start date</label><input id="sd" type="date" value="${todayISO()}" /></div>
@@ -3357,8 +3356,8 @@ function approveOrder(o){
         if(weekly <= 0) return toast('Weekly installment must be greater than zero.','error');
         const r = computeSchedule(principal, weekly, 'flat', start);
         const effectiveWeeks = weeksInput > 0 ? weeksInput : r.weeks;
-        if(effectiveWeeks > 52 || r.weeks > 52){
-          return toast('The maximum allowed loan term is 52 weeks (1 year). Please increase the weekly payment or reduce the weeks.','error');
+        if(effectiveWeeks > 48 || r.weeks > 48){
+          return toast('The maximum allowed loan term is 48 weeks. Please increase the weekly payment or reduce the weeks.','error');
         }
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
         // Use primary asset for loan record fields
@@ -3398,9 +3397,12 @@ function approveOrder(o){
             meeting_date: $('sd').value,
             notes: 'Auto-recorded 25% upfront deposit (loan > KES 20,000)'
           };
-          const { error: depErr } = await sb.from('pb_repayments').insert(dep).select().single();
+          const { data: depData, error: depErr } = await sb.from('pb_repayments').insert(dep).select().single();
           if(depErr) toast('Deposit repayment record failed: '+depErr.message,'warn');
-          else audit('deposit_repayment','pb_repayments',loanData.id,null,dep);
+          else {
+            state.data.repayments.unshift(depData);
+            audit('deposit_repayment','pb_repayments',loanData.id,null,dep);
+          }
         }
 
         closeModal(); render(); toast('Loan issued and stock deducted'+(requiresDeposit?' — deposit recorded':''),'success');
@@ -3413,9 +3415,8 @@ function approveOrder(o){
       if(_updating) return; _updating = true;
       const weeks = Number($('al-weeks').value)||0;
       if(weeks > 0){
-        const rate = state.settings?.monthly_interest_rate || 0.025;
-        const annualRate = rate * 12;
-        const weeklyRate = annualRate / 52;
+        const rate = state.settings?.monthly_interest_rate || 2.5;
+        const weeklyRate = (rate / 100) / 4;
         const totalPayable = principal * (1 + weeklyRate * weeks);
         const wi = Math.ceil(totalPayable / weeks);
         $('wi').value = wi;
@@ -3439,8 +3440,8 @@ function approveOrder(o){
       if(!w){ $('al-out').innerHTML = ''; return; }
       const s = new Date($('sd').value||todayISO());
       const r = computeSchedule(principal, w, 'flat', s);
-      const over52 = r.weeks > 52;
-      $('al-out').innerHTML = `Total payable ${KES(r.totalPayable)} · Total interest ${KES(r.totalInterest)} · ${r.weeks} weeks${over52 ? ' <span class="danger-text">(exceeds 52-week limit)</span>' : ''}`;
+      const over52 = r.weeks > 48;
+      $('al-out').innerHTML = `Total payable ${KES(r.totalPayable)} · Total interest ${KES(r.totalInterest)} · ${r.weeks} weeks${over52 ? ' <span class="danger-text">(exceeds 48-week limit)</span>' : ''}`;
     };
     $('al-weeks').addEventListener('input', updFromWeeks);
     $('wi').addEventListener('input', updFromInstallment);
@@ -3675,13 +3676,13 @@ function pageSettings(){
           <div class="field"><label>M-Pesa account number</label><input name="paybill_account" value="${s.paybill_account||''}" /></div>
           <div class="field"><label>Savings eligibility threshold (KES)</label><input type="number" min="0" name="savings_threshold" value="${s.savings_threshold||900}" /></div>
           <div class="field"><label>Registration fee (KES)</label><input type="number" min="0" name="registration_fee" value="${s.registration_fee||200}" /></div>
-          <div class="field"><label>Maximum loan term (weeks)</label><input type="number" min="1" max="104" name="max_loan_weeks" value="${s.max_loan_weeks||52}" /></div>
+          <div class="field"><label>Maximum loan term (weeks)</label><input type="number" min="1" max="48" name="max_loan_weeks" value="${s.max_loan_weeks||48}" /></div>
           <div class="field">
-            <label>Monthly interest rate (decimal)</label>
-            <input type="number" step="0.0001" min="0" name="monthly_interest_rate" id="monthly_interest_input" value="${s.monthly_interest_rate||0.025}" oninput="updateWeeklyRateDisplay(this.value)" />
+            <label>Monthly interest rate (%)</label>
+            <input type="number" step="0.0001" min="0" name="monthly_interest_rate" id="monthly_interest_input" value="${s.monthly_interest_rate||2.5}" oninput="updateWeeklyRateDisplay(this.value)" />
             <div id="weekly_rate_display" style="margin-top:6px;font-size:12px;color:var(--text-muted)">
-              ≈ Weekly rate: <b id="weekly_rate_val">${((s.monthly_interest_rate||0.025)*12/52*100).toFixed(4)}%</b>
-              &nbsp;·&nbsp; e.g. KES 10,000 loan = <b id="weekly_interest_ex">${KES((s.monthly_interest_rate||0.025)*12/52*10000)}</b> interest/week (flat)
+              ≈ Weekly rate: <b id="weekly_rate_val">${((s.monthly_interest_rate||2.5)/4).toFixed(4)}%</b>
+              &nbsp;·&nbsp; e.g. KES 10,000 loan = <b id="weekly_interest_ex">${KES(((s.monthly_interest_rate||2.5)/4/100)*10000)}</b> interest/week (flat)
             </div>
           </div>
         </div>
