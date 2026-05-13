@@ -3364,7 +3364,7 @@ function approveOrder(o){
         const primaryLine = resolvedLines[0];
         const loan = {
           business_id: state.staff.business_id || null,
-          member_id: member.id, group_id: member.group_id, officer_id: state.staff.id,
+          member_id: member.id, group_id: member.group_id, officer_id: o.recorded_by,
           order_id: o.id, asset_id: primaryLine.asset.id, asset_name: o.asset_name,
           asset_quantity: resolvedLines.reduce((a,l)=>a+l.quantity,0),
           loan_value: principal, weekly_installment: weekly, total_payable: r.totalPayable,
