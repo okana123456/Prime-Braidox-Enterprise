@@ -3362,9 +3362,15 @@ function approveOrder(o){
         const end = new Date(start); end.setDate(end.getDate() + 7*r.weeks);
         // Use primary asset for loan record fields
         const primaryLine = resolvedLines[0];
+        // Derive the correct officer from the member's group assignment.
+        // o.recorded_by is whoever created the order (often the Admin), which is
+        // NOT the Loan Officer managing the member. The group's officer_id is the
+        // authoritative source and matches what the Officer Dashboard displays.
+        const memberGroup = state.data.groups.find(g => g.id === member.group_id);
+        const resolvedOfficerId = memberGroup?.officer_id || o.recorded_by || null;
         const loan = {
           business_id: state.staff.business_id || null,
-          member_id: member.id, group_id: member.group_id, officer_id: o.recorded_by,
+          member_id: member.id, group_id: member.group_id, officer_id: resolvedOfficerId,
           order_id: o.id, asset_id: primaryLine.asset.id, asset_name: o.asset_name,
           asset_quantity: resolvedLines.reduce((a,l)=>a+l.quantity,0),
           loan_value: principal, weekly_installment: weekly, total_payable: r.totalPayable,
