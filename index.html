@@ -726,13 +726,13 @@ async function audit(action, entity=null, entity_id=null, oldV=null, newV=null){
  * DERIVED METRICS
  * ===================================================================== */
 function memberSavings(memberId){
-  return state.data.savings.filter(s=>s.member_id===memberId).reduce((a,b)=>a + Number(b.amount||0), 0);
+  return state.data.savings.filter(s=>s.member_id===memberId && s.status!=='pending').reduce((a,b)=>a + Number(b.amount||0), 0);
 }
 function memberLoan(memberId){
   return state.data.loans.find(l=>l.member_id===memberId && l.status==='active');
 }
 function loanPaid(loanId){
-  return state.data.repayments.filter(r=>r.loan_id===loanId).reduce((a,b)=>a + Number(b.amount||0), 0);
+  return state.data.repayments.filter(r=>r.loan_id===loanId && r.status!=='pending').reduce((a,b)=>a + Number(b.amount||0), 0);
 }
 function memberEligible(memberId){
   const t = Number(state.settings?.savings_threshold || 900);
@@ -1190,7 +1190,8 @@ function pageDashboard(){
     const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRangeFallback(r.meeting_date||'', r.created_at)).reduce((a,b)=>a+Number(b.amount||0),0);
     const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
     const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
-    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday };
+    const oLoanValueToday = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active' && (l.start_date||'').slice(0,10)===todayISO_).reduce((a,b)=>a+Number(b.loan_value||0),0);
+    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday, loanValueToday: oLoanValueToday };
   }).sort((a,b)=>b.savings-a.savings);
 
   const filterBtns = [
@@ -1267,7 +1268,7 @@ function pageDashboard(){
       <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp;·&nbsp; Active loans &amp; disbursed today are always current</div></div>
       <div style="overflow-x:auto">
         <table class="tbl">
-          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th><th class="num">Orders today</th></tr></thead>
+          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th><th class="num">Orders today</th><th class="num">Loan Value Today</th></tr></thead>
           <tbody>
             ${officerPerf.map(o=>`<tr>
               <td><b>${o.name}</b></td>
@@ -1275,6 +1276,7 @@ function pageDashboard(){
               <td class="num">${KES(o.repayments)}</td>
               <td class="num">${o.loans}</td>
               <td class="num" style="color:${o.disbursedToday>0?'var(--primary)':'inherit'}">${o.ordersToday>0?o.ordersToday:'—'}</td>
+              <td class="num" style="color:${o.loanValueToday>0?'var(--primary)':'inherit'}">${o.loanValueToday>0?KES(o.loanValueToday):'—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -1376,6 +1378,8 @@ function pageOfficerDashboard(){
   const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
   const myOutstandingBal = myLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
   const myInterestEarned = myRepay.reduce((a,r)=>a+Number(r.interest||0),0);
+  const todayStr = todayISO();
+  const myLoansIssuedToday = state.data.loans.filter(l=>l.status==='active' && l.officer_id===me.id && (l.start_date||'').slice(0,10)===todayStr).reduce((a,b)=>a+Number(b.loan_value||0),0);
 
   const filterBtns = [
     ['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']
@@ -1396,6 +1400,7 @@ function pageOfficerDashboard(){
       <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">Interest ${KES(myInterestEarned)}</div></div>
       <div class="kpi k-warn"><div class="l">Active loans I manage</div><div class="v">${myLoans.length}</div></div>
       <div class="kpi k-danger"><div class="l">Outstanding balance</div><div class="v">${KES(myOutstandingBal)}</div><div class="d">across my active loans</div></div>
+      <div class="kpi k-primary"><div class="l">Loans Issued Today</div><div class="v">${KES(myLoansIssuedToday)}</div><div class="d">active loans started today</div></div>
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-head"><h3>My groups</h3></div>
@@ -1436,7 +1441,16 @@ function pageOfficerDashboard(){
 function pageGroups(){
   const isAdmin = state.staff.role === 'admin';
   // Officers only see their own groups
-  const groups = isAdmin ? state.data.groups : state.data.groups.filter(g=>g.officer_id===state.staff.id);
+  let groups = isAdmin ? state.data.groups : state.data.groups.filter(g=>g.officer_id===state.staff.id);
+
+  // Apply search filter
+  const q = (state._groupSearch||'').toLowerCase();
+  if(q) groups = groups.filter(g =>
+    (g.name||'').toLowerCase().includes(q) ||
+    (g.chairman_name||'').toLowerCase().includes(q) ||
+    String(g.group_number||'').includes(q)
+  );
+
   const PAGE_SIZE = 10;
   const _gPage = state._groupsPage || 0;
   const total = groups.length;
@@ -1450,6 +1464,12 @@ function pageGroups(){
       </div>
       <div class="actions">
         <button class="btn btn-primary" onclick="openGroupForm()">Register group</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="search-box grow">
+        <span class="ic">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
+        <input id="grp-search" placeholder="Search by name, chairman or group number" value="${state._groupSearch||''}"/>
       </div>
     </div>
     <div class="table-wrap">
@@ -1475,7 +1495,7 @@ function pageGroups(){
               <td><span class="badge ${g.status==='active'?'b-green':'b-grey'}">${g.status}</span></td>
               <td><button class="act-btn" onclick="groupActions(event,'${g.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="9"><div class="empty"><h4>No groups registered</h4><p>Create your first chama group to start onboarding members.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="9"><div class="empty"><h4>No groups found</h4><p>${q ? 'No groups match your search.' : 'Create your first chama group to start onboarding members.'}</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1485,6 +1505,12 @@ function pageGroups(){
       <button class="btn btn-sm btn-outline" ${(_gPage+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._groupsPage=${_gPage+1};pageGroups()">Next →</button>
     </div>` : ''}
   `;
+  $('grp-search').addEventListener('input', e => {
+    state._groupSearch = e.target.value;
+    state._groupsPage = 0;
+    pageGroups();
+    setTimeout(()=>{ const el=$('grp-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },0);
+  });
 }
 function groupActions(ev, id){
   const g = state.data.groups.find(x=>x.id===id);
@@ -2257,7 +2283,8 @@ async function submitMeeting(){
     const sav = Number(e.savings)||0;
 
     if(sav>0){
-      savRows.push({ business_id: state.staff.business_id || null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, recorded_by: state.staff.id, notes: e.notes||null });
+      const savStatus = state.staff.role === 'admin' ? 'approved' : 'pending';
+      savRows.push({ business_id: state.staff.business_id || null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, recorded_by: state.staff.id, notes: e.notes||null, status: savStatus });
     }
 
     if (e.repayments) {
@@ -2268,7 +2295,8 @@ async function submitMeeting(){
           const ir = Number(ln.total_payable) ? (Number(ln.total_payable)-Number(ln.loan_value))/Number(ln.total_payable) : 0;
           const interest = +(rep*ir).toFixed(2);
           const principal = +(rep-interest).toFixed(2);
-          repRows.push({ business_id: state.staff.business_id || null, loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id });
+          const repStatus = state.staff.role === 'admin' ? 'approved' : 'pending';
+          repRows.push({ business_id: state.staff.business_id || null, loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id, status: repStatus });
         }
       }
     }
@@ -4464,6 +4492,14 @@ function pageAccounting(){
   const totalLoansOut = loansIssued.reduce((a,b)=>a+Number(b.loan_value||0),0);
   const totalExpectedReturn = loansIssued.reduce((a,b)=>a+Number(b.total_payable||0),0);
 
+  // === COST OF ASSETS ISSUED (COGS) ===
+  const totalCOGS = loansIssued.reduce((a, l) => {
+    const invItem = state.data.inventory.find(i => i.id === l.asset_id || i.name === l.asset_name);
+    const buyingPrice = Number(invItem?.buying_price || 0);
+    const qty = Number(l.asset_quantity || 1);
+    return a + buyingPrice * qty;
+  }, 0);
+
   // === OPERATIONAL EXPENSES ===
   const expensesInPeriod = (state.data.expenses||[]).filter(e=>inRange(e.date||''));
   const totalExpensesOut = expensesInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
@@ -4508,6 +4544,7 @@ function pageAccounting(){
       <div class="kpi k-primary"><div class="l">Expected return</div><div class="v">${KES(totalExpectedReturn)}</div><div class="d">Interest: ${KES(totalExpectedReturn-totalLoansOut)}</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
       <div class="kpi k-danger"><div class="l">Operational Expenses</div><div class="v">${KES(totalExpensesOut)}</div><div class="d">${expensesInPeriod.length} entr${expensesInPeriod.length!==1?'ies':'y'}</div></div>
+      <div class="kpi k-warn"><div class="l">Cost of Assets Issued</div><div class="v">${KES(totalCOGS)}</div><div class="d">${loansIssued.length} loan${loansIssued.length!==1?'s':''} issued</div></div>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
@@ -4860,9 +4897,22 @@ function pageSavings(){
 }
 
 function savingsRowActions(ev, id){
-  showActMenu(ev, [
+  const sav = state.data.savings.find(x=>x.id===id);
+  const isAdmin = state.staff.role === 'admin';
+  const items = [
     { label: '✏ Edit entry', onClick: () => openEditSaving(id) }
-  ]);
+  ];
+  if(isAdmin && sav && sav.status === 'pending'){
+    items.push('sep');
+    items.push({ label: '✓ Approve', onClick: async () => {
+      const { error } = await sb.from('pb_savings').update({ status: 'approved' }).eq('id', id);
+      if(error) return toast(error.message, 'error');
+      sav.status = 'approved';
+      render();
+      toast('Savings entry approved.', 'success');
+    }});
+  }
+  showActMenu(ev, items);
 }
 
 function exportSavingsFiltered(){
@@ -5021,9 +5071,22 @@ function pageRepayments(){
 }
 
 function repRowActions(ev, id){
-  showActMenu(ev, [
+  const rep = state.data.repayments.find(x=>x.id===id);
+  const isAdmin = state.staff.role === 'admin';
+  const items = [
     { label: '✏ Edit entry', onClick: () => openEditRepayment(id) }
-  ]);
+  ];
+  if(isAdmin && rep && rep.status === 'pending'){
+    items.push('sep');
+    items.push({ label: '✓ Approve', onClick: async () => {
+      const { error } = await sb.from('pb_repayments').update({ status: 'approved' }).eq('id', id);
+      if(error) return toast(error.message, 'error');
+      rep.status = 'approved';
+      render();
+      toast('Repayment entry approved.', 'success');
+    }});
+  }
+  showActMenu(ev, items);
 }
 
 function exportRepaymentsFiltered(){
@@ -5231,7 +5294,8 @@ function openStandaloneRepayment(loanId, memberId){
           group_id: ln.group_id || null,
           meeting_date: date,
           amount, principal, interest,
-          recorded_by: state.staff.id
+          recorded_by: state.staff.id,
+          status: state.staff.role === 'admin' ? 'approved' : 'pending'
         };
 
         const { data, error } = await sb.from('pb_repayments').insert(row).select().single();
