@@ -1172,8 +1172,8 @@ function pageDashboard(){
     return cd >= start && cd <= end;
   };
 
-  const savings = state.data.savings.filter(s => inRangeFallback(s.meeting_date||'', s.created_at));
-  const repayments = state.data.repayments.filter(r => inRangeFallback(r.meeting_date||'', r.created_at));
+  const savings = state.data.savings.filter(s => inRangeFallback(s.meeting_date||'', s.created_at) && s.status !== 'pending');
+  const repayments = state.data.repayments.filter(r => inRangeFallback(r.meeting_date||'', r.created_at) && r.status !== 'pending');
   const totalSavings = savings.reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRepay = repayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const activeLoans = state.data.loans.filter(l=>l.status==='active');
@@ -1186,8 +1186,8 @@ function pageDashboard(){
   const officers = state.data.staff.filter(s => s.role==='officer' && s.status==='active');
   const todayISO_ = todayISO();
   const officerPerf = officers.map(o => {
-    const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRangeFallback(s.meeting_date||'', s.created_at)).reduce((a,b)=>a+Number(b.amount||0),0);
-    const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRangeFallback(r.meeting_date||'', r.created_at)).reduce((a,b)=>a+Number(b.amount||0),0);
+    const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRangeFallback(s.meeting_date||'', s.created_at) && s.status !== 'pending').reduce((a,b)=>a+Number(b.amount||0),0);
+    const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRangeFallback(r.meeting_date||'', r.created_at) && r.status !== 'pending').reduce((a,b)=>a+Number(b.amount||0),0);
     const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
     const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
     const oLoanValueToday = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active' && (l.start_date||'').slice(0,10)===todayISO_).reduce((a,b)=>a+Number(b.loan_value||0),0);
@@ -1370,14 +1370,19 @@ function pageOfficerDashboard(){
     if(createdAt){ const cd = new Date(createdAt).toISOString().slice(0,10); if(cd >= start && cd <= end) return true; }
     return false;
   };
-  const mySavings = state.data.savings.filter(s=>s.recorded_by===me.id && inRangeOff(s.meeting_date, s.created_at));
-  const myRepay = state.data.repayments.filter(r=>r.recorded_by===me.id && inRangeOff(r.meeting_date, r.created_at));
+  const mySavings = state.data.savings.filter(s=>s.recorded_by===me.id && inRangeOff(s.meeting_date, s.created_at) && s.status !== 'pending');
+  const myRepay = state.data.repayments.filter(r=>r.recorded_by===me.id && inRangeOff(r.meeting_date, r.created_at) && r.status !== 'pending');
   const myGroupIds = new Set(myGroups.map(g=>g.id));
   const myLoans = state.data.loans.filter(l=>l.status==='active' && (l.officer_id===me.id || myGroupIds.has(l.group_id)));
   const totalSv = mySavings.reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
   const myOutstandingBal = myLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
   const myInterestEarned = myRepay.reduce((a,r)=>a+Number(r.interest||0),0);
+  // Pending (awaiting admin approval) — all-time for this officer, not range-filtered
+  const myPendingSavings = state.data.savings.filter(s=>s.recorded_by===me.id && s.status==='pending');
+  const myPendingRepayments = state.data.repayments.filter(r=>r.recorded_by===me.id && r.status==='pending');
+  const myPendingSavingsTotal = myPendingSavings.reduce((a,b)=>a+Number(b.amount||0),0);
+  const myPendingRepaymentsTotal = myPendingRepayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const todayStr = todayISO();
   const myLoansIssuedToday = state.data.loans.filter(l=>l.status==='active' && l.officer_id===me.id && (l.start_date||'').slice(0,10)===todayStr).reduce((a,b)=>a+Number(b.loan_value||0),0);
 
@@ -1396,11 +1401,17 @@ function pageOfficerDashboard(){
     </div>
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
       <div class="kpi k-primary"><div class="l">My groups</div><div class="v">${myGroups.length}</div></div>
-      <div class="kpi k-success"><div class="l">Savings recorded</div><div class="v">${KES(totalSv)}</div><div class="d">${mySavings.length} entries</div></div>
+      <div class="kpi k-success"><div class="l">Savings recorded</div><div class="v">${KES(totalSv)}</div><div class="d">${mySavings.length} approved entries</div></div>
       <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">Interest ${KES(myInterestEarned)}</div></div>
       <div class="kpi k-warn"><div class="l">Active loans I manage</div><div class="v">${myLoans.length}</div></div>
       <div class="kpi k-danger"><div class="l">Outstanding balance</div><div class="v">${KES(myOutstandingBal)}</div><div class="d">across my active loans</div></div>
       <div class="kpi k-primary"><div class="l">Loans Issued Today</div><div class="v">${KES(myLoansIssuedToday)}</div><div class="d">active loans started today</div></div>
+      ${(myPendingSavings.length + myPendingRepayments.length) > 0 ? `
+      <div class="kpi" style="border-top:3px solid var(--warning);background:var(--warning-50)">
+        <div class="l" style="color:var(--warning)">Pending Admin Approval</div>
+        <div class="v" style="font-size:18px">${myPendingSavings.length + myPendingRepayments.length} <span style="font-size:13px;font-weight:500;color:var(--text-muted)">entries</span></div>
+        <div class="d">${myPendingSavings.length > 0 ? `Savings: ${KES(myPendingSavingsTotal)} (${myPendingSavings.length})` : ''}${myPendingSavings.length > 0 && myPendingRepayments.length > 0 ? ' · ' : ''}${myPendingRepayments.length > 0 ? `Repayments: ${KES(myPendingRepaymentsTotal)} (${myPendingRepayments.length})` : ''}</div>
+      </div>` : ''}
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-head"><h3>My groups</h3></div>
@@ -1936,7 +1947,7 @@ function pageMemberProfile(){
   const g = state.data.groups.find(x=>x.id===m.group_id);
   const guars = state.data.guarantors.filter(x=>x.member_id===m.id);
   const sv = state.data.savings.filter(x=>x.member_id===m.id).sort((a,b)=>b.meeting_date.localeCompare(a.meeting_date));
-  const totalSv = sv.reduce((a,b)=>a+Number(b.amount||0),0);
+  const totalSv = sv.filter(s=>s.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0);
   const ln = memberLoan(m.id);
   const allLoans = state.data.loans.filter(l=>l.member_id===m.id).sort((a,b)=>new Date(b.start_date)-new Date(a.start_date));
   const orders = state.data.orders.filter(o=>o.member_id===m.id).sort((a,b)=>new Date(b.ordered_on)-new Date(a.ordered_on));
@@ -1964,9 +1975,9 @@ function pageMemberProfile(){
     </div>
 
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
-      <div class="kpi k-success"><div class="l">Total savings</div><div class="v">${KES(totalSv)}</div><div class="d">${memberEligible(m.id)?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Below threshold</span>'}</div></div>
+      <div class="kpi k-success"><div class="l">Total savings</div><div class="v">${KES(totalSv)}</div><div class="d">${memberEligible(m.id)?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Below threshold</span>'}${sv.filter(s=>s.status==='pending').length>0?`<span class="badge b-yellow" style="margin-left:4px">${sv.filter(s=>s.status==='pending').length} pending</span>`:''}</div></div>
       <div class="kpi k-primary"><div class="l">Active loan</div><div class="v">${ln?KES(ln.loan_value):'—'}</div><div class="d">${ln?'Outstanding '+KES(Number(ln.total_payable)-loanPaid(ln.id)):'No active loan'}</div></div>
-      <div class="kpi"><div class="l">Total repaid</div><div class="v">${KES(repayments.reduce((a,b)=>a+Number(b.amount||0),0))}</div><div class="d">${repayments.length} entries</div></div>
+      <div class="kpi"><div class="l">Total repaid</div><div class="v">${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}</div><div class="d">${repayments.filter(r=>r.status!=='pending').length} approved entries${repayments.filter(r=>r.status==='pending').length>0?` · <span style="color:var(--warning)">${repayments.filter(r=>r.status==='pending').length} pending</span>`:''}</div></div>
       <div class="kpi k-warn"><div class="l">Member since</div><div class="v" style="font-size:16px">${fmtDate(m.registered_on)}</div></div>
     </div>
 
@@ -2010,26 +2021,28 @@ function pageMemberProfile(){
 
       ${tab==='savings' ? `
         <div class="card">
-          <div class="card-head"><h3>Savings history</h3><div class="sub">Total: ${KES(totalSv)}</div></div>
+          <div class="card-head"><h3>Savings history</h3><div class="sub">Approved total: ${KES(totalSv)}${sv.filter(s=>s.status==='pending').length>0?` · <span style="color:var(--warning);font-weight:600">${sv.filter(s=>s.status==='pending').length} pending approval</span>`:''}</div></div>
           <div style="overflow-x:auto"><table class="tbl">
-            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
+            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Status</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
             <tbody>
               ${(()=>{
                 let running = 0;
                 const canEdit = state.staff.role==='admin' || state.staff.role==='officer';
                 return [...sv].reverse().map(s=>{
-                  running += Number(s.amount||0);
+                  const isPending = s.status === 'pending';
+                  if(!isPending) running += Number(s.amount||0);
                   const officer = state.data.staff.find(x=>x.id===s.recorded_by);
-                  return `<tr>
+                  return `<tr${isPending?' style="background:var(--warning-50)"':''}>
                     <td>${fmtDate(s.meeting_date)}</td>
                     <td class="num">${KES(s.amount)}${s.edit_notes?'<span title="Edited: '+s.edit_notes.replace(/"/g,"'")+'" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
-                    <td class="num" style="color:var(--success)">${KES(running)}</td>
+                    <td class="num" style="color:${isPending?'var(--text-muted)':'var(--success)'}">${isPending?'—':KES(running)}</td>
+                    <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
                     <td>${officer?.full_name||'—'}</td>
-                    ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditSaving('${s.id}')}])">···</button></td>`:''}
+                    ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditSaving('${s.id}')}${isPending&&state.staff.role==='admin'?`,{label:'✓ Approve',onClick:async()=>{const{error}=await sb.from('pb_savings').update({status:'approved'}).eq('id','${s.id}');if(error)return toast(error.message,'error');s.status='approved';render();toast('Savings entry approved.','success');}}`:''}])">···</button></td>`:''}
                   </tr>`;
                 }).reverse().join('');
               })()}
-              ${!sv.length?`<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?5:4}"><div class="empty"><h4>No savings yet</h4></div></td></tr>`:''}
+              ${!sv.length?`<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?6:5}"><div class="empty"><h4>No savings yet</h4></div></td></tr>`:''}
             </tbody>
           </table></div>
         </div>
@@ -2099,25 +2112,27 @@ function pageMemberProfile(){
           <div class="card-head">
             <h3>Repayment history</h3>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <div class="sub">Total repaid: ${KES(repayments.reduce((a,b)=>a+Number(b.amount||0),0))}</div>
+              <div class="sub">Approved total: ${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}${repayments.filter(r=>r.status==='pending').length>0?` · <span style="color:var(--warning);font-weight:600">${repayments.filter(r=>r.status==='pending').length} pending approval</span>`:''}</div>
               ${ln ? `<button class="btn btn-sm btn-primary" onclick="openStandaloneRepayment('${ln.id}','${m.id}')">📥 Record Repayment</button>` : ''}
             </div>
           </div>
           <div style="overflow-x:auto"><table class="tbl">
-            <thead><tr><th>Date</th><th class="num">Amount</th><th class="num">Principal</th><th class="num">Interest</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
+            <thead><tr><th>Date</th><th class="num">Amount</th><th class="num">Principal</th><th class="num">Interest</th><th>Status</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
             <tbody>
               ${repayments.map(r=>{
                 const officer = state.data.staff.find(x=>x.id===r.recorded_by);
                 const canEdit = state.staff.role==='admin' || state.staff.role==='officer';
-                return `<tr>
+                const isPending = r.status === 'pending';
+                return `<tr${isPending?' style="background:var(--warning-50)"':''}>
                   <td>${fmtDate(r.meeting_date)}</td>
                   <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?'<span title="Edited: '+r.edit_notes.replace(/"/g,"'")+'" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
                   <td class="num">${KES(r.principal)}</td>
                   <td class="num">${KES(r.interest)}</td>
+                  <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
                   <td>${officer?.full_name||'—'}</td>
-                  ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditRepayment('${r.id}')}])">···</button></td>`:''}
+                  ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditRepayment('${r.id}')}${isPending&&state.staff.role==='admin'?`,{label:'✓ Approve',onClick:async()=>{const{error}=await sb.from('pb_repayments').update({status:'approved'}).eq('id','${r.id}');if(error)return toast(error.message,'error');r.status='approved';render();toast('Repayment approved.','success');}}`:''}])">···</button></td>`:''}
                 </tr>`;
-              }).join('') || `<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?6:5}"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
+              }).join('') || `<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?7:6}"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
             </tbody>
           </table></div>
         </div>
@@ -4873,23 +4888,25 @@ function pageSavings(){
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>Date</th><th>Member</th><th>Group</th><th class="num">Amount</th><th>Recorded By</th><th></th>
+          <th>Date</th><th>Member</th><th>Group</th><th class="num">Amount</th><th>Status</th><th>Recorded By</th><th></th>
         </tr></thead>
         <tbody>
           ${filtered.length ? filtered.map(s => {
             const mem = state.data.members.find(x=>x.id===s.member_id);
             const grp = state.data.groups.find(x=>x.id===s.group_id);
             const rec = state.data.staff.find(x=>x.id===s.recorded_by);
-            return `<tr>
+            const isPending = s.status === 'pending';
+            return `<tr${isPending ? ' style="background:var(--warning-50)"' : ''}>
               <td>${fmtDate(s.meeting_date)}</td>
               <td><b>${mem?.full_name||'—'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
               <td>${grp?.name||'—'}</td>
               <td class="num"><b>${KES(s.amount)}</b>${s.edit_notes?`<div class="muted" style="font-size:10px" title="${s.edit_notes}">✏ edited</div>`:''}
               </td>
+              <td>${isPending ? '<span class="badge b-yellow">Pending Admin Approval</span>' : '<span class="badge b-green">Approved</span>'}</td>
               <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'—'}</td>
               <td><button class="act-btn" onclick="savingsRowActions(event,'${s.id}')">···</button></td>
             </tr>`;
-          }).join('') : `<tr><td colspan="6"><div class="empty"><h4>No savings found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
+          }).join('') : `<tr><td colspan="7"><div class="empty"><h4>No savings found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -5043,7 +5060,7 @@ function pageRepayments(){
         <thead><tr>
           <th>Date</th><th>Member</th><th>Group</th><th>Loan Asset</th>
           <th class="num">Total</th><th class="num">Principal</th><th class="num">Interest</th>
-          <th>Recorded By</th><th></th>
+          <th>Status</th><th>Recorded By</th><th></th>
         </tr></thead>
         <tbody>
           ${filtered.length ? filtered.map(r => {
@@ -5051,7 +5068,8 @@ function pageRepayments(){
             const grp = state.data.groups.find(x=>x.id===r.group_id);
             const ln = state.data.loans.find(x=>x.id===r.loan_id);
             const rec = state.data.staff.find(x=>x.id===r.recorded_by);
-            return `<tr>
+            const isPending = r.status === 'pending';
+            return `<tr${isPending ? ' style="background:var(--warning-50)"' : ''}>
               <td>${fmtDate(r.meeting_date)}</td>
               <td><b>${mem?.full_name||'—'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
               <td>${grp?.name||'—'}</td>
@@ -5060,10 +5078,11 @@ function pageRepayments(){
               </td>
               <td class="num">${KES(r.principal)}</td>
               <td class="num" style="color:var(--warning)">${KES(r.interest)}</td>
+              <td>${isPending ? '<span class="badge b-yellow">Pending Admin Approval</span>' : '<span class="badge b-green">Approved</span>'}</td>
               <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'—'}</td>
               <td><button class="act-btn" onclick="repRowActions(event,'${r.id}')">···</button></td>
             </tr>`;
-          }).join('') : `<tr><td colspan="9"><div class="empty"><h4>No repayments found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
+          }).join('') : `<tr><td colspan="10"><div class="empty"><h4>No repayments found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
