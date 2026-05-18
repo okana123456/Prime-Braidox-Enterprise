@@ -1414,14 +1414,31 @@ function pageOfficerDashboard(){
       </div>` : ''}
     </div>
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><h3>My groups</h3></div>
+      <div class="card-head"><h3>My groups</h3><div class="sub">Savings &amp; repayments today = ${todayStr}</div></div>
       <div style="overflow-x:auto"><table class="tbl">
-        <thead><tr><th>Group</th><th class="num">Members</th><th class="num">Total savings</th><th>Meeting day</th></tr></thead>
+        <thead><tr>
+          <th>Group</th><th class="num">Members</th><th class="num">Total savings</th>
+          <th class="num">Savings today</th><th class="num">Repayments today</th>
+          <th>Meeting day</th>
+        </tr></thead>
         <tbody>
           ${myGroups.map(g=>{
             const mc = state.data.members.filter(m=>m.group_id===g.id).length;
-            return `<tr><td><b>${g.name}</b></td><td class="num">${mc}</td><td class="num">${KES(groupSavingsTotal(g.id))}</td><td>${g.meeting_day||'—'}</td></tr>`;
-          }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No groups assigned</h4></div></td></tr>`}
+            const savToday = state.data.savings
+              .filter(s=>s.group_id===g.id && s.status!=='pending' && (s.meeting_date||'').slice(0,10)===todayStr)
+              .reduce((a,b)=>a+Number(b.amount||0),0);
+            const repToday = state.data.repayments
+              .filter(r=>r.group_id===g.id && r.status!=='pending' && (r.meeting_date||'').slice(0,10)===todayStr)
+              .reduce((a,b)=>a+Number(b.amount||0),0);
+            return `<tr>
+              <td><b>${g.name}</b></td>
+              <td class="num">${mc}</td>
+              <td class="num">${KES(groupSavingsTotal(g.id))}</td>
+              <td class="num" style="color:${savToday>0?'var(--success)':'var(--text-muted)'}"><b>${savToday>0?KES(savToday):'—'}</b></td>
+              <td class="num" style="color:${repToday>0?'var(--primary)':'var(--text-muted)'}"><b>${repToday>0?KES(repToday):'—'}</b></td>
+              <td>${g.meeting_day||'—'}</td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="6"><div class="empty" style="padding:20px 0"><h4>No groups assigned</h4></div></td></tr>`}
         </tbody>
       </table></div>
     </div>
