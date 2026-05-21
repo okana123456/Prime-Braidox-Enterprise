@@ -1094,6 +1094,10 @@ let _dashFilter = 'today';
 let _dashCustomStart = '', _dashCustomEnd = '';
 let _arrearsFilter = 'all'; // date range filter for arrears page and dashboard
 let _arrearsCustomStart = '', _arrearsCustomEnd = '';
+let _loanDateFilter = 'all';
+let _loanCustomStart = '', _loanCustomEnd = '';
+let _mpSavingsFilter = 'all';
+let _mpSavingsCustomStart = '', _mpSavingsCustomEnd = '';
 
 function dashDateRange(){
   const now = new Date();
@@ -1188,10 +1192,10 @@ function pageDashboard(){
   const officerPerf = officers.map(o => {
     const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRangeFallback(s.meeting_date||'', s.created_at) && s.status !== 'pending').reduce((a,b)=>a+Number(b.amount||0),0);
     const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRangeFallback(r.meeting_date||'', r.created_at) && r.status !== 'pending').reduce((a,b)=>a+Number(b.amount||0),0);
-    const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').length;
+    const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').reduce((a,b)=>a+Number(b.loan_value||0),0);
     const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
-    const oLoanValueToday = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active' && (l.start_date||'').slice(0,10)===todayISO_).reduce((a,b)=>a+Number(b.loan_value||0),0);
-    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday, loanValueToday: oLoanValueToday };
+    const oLoanValuePeriod = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active' && inRangeFallback(l.start_date, l.created_at)).reduce((a,b)=>a+Number(b.loan_value||0),0);
+    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday, loanValuePeriod: oLoanValuePeriod };
   }).sort((a,b)=>b.savings-a.savings);
 
   const filterBtns = [
@@ -1268,15 +1272,15 @@ function pageDashboard(){
       <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp;·&nbsp; Active loans &amp; disbursed today are always current</div></div>
       <div style="overflow-x:auto">
         <table class="tbl">
-          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans</th><th class="num">Orders today</th><th class="num">Loan Value Today</th></tr></thead>
+          <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans (Value)</th><th class="num">Orders today</th><th class="num">Loan Value (Period)</th></tr></thead>
           <tbody>
             ${officerPerf.map(o=>`<tr>
               <td><b>${o.name}</b></td>
               <td class="num">${KES(o.savings)}</td>
               <td class="num">${KES(o.repayments)}</td>
-              <td class="num">${o.loans}</td>
-              <td class="num" style="color:${o.disbursedToday>0?'var(--primary)':'inherit'}">${o.ordersToday>0?o.ordersToday:'—'}</td>
-              <td class="num" style="color:${o.loanValueToday>0?'var(--primary)':'inherit'}">${o.loanValueToday>0?KES(o.loanValueToday):'—'}</td>
+              <td class="num">${KES(o.loans)}</td>
+              <td class="num" style="color:${o.ordersToday>0?'var(--primary)':'inherit'}">${o.ordersToday>0?o.ordersToday:'—'}</td>
+              <td class="num" style="color:${o.loanValuePeriod>0?'var(--primary)':'inherit'}">${o.loanValuePeriod>0?KES(o.loanValuePeriod):'—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -1473,11 +1477,14 @@ function pageGroups(){
 
   // Apply search filter
   const q = (state._groupSearch||'').toLowerCase();
+  // Sort groups by meeting day (Monday → Sunday)
+  const dayWeight = {Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6,Sunday:7};
   if(q) groups = groups.filter(g =>
     (g.name||'').toLowerCase().includes(q) ||
     (g.chairman_name||'').toLowerCase().includes(q) ||
     String(g.group_number||'').includes(q)
   );
+  groups = groups.slice().sort((a,b)=>(dayWeight[a.meeting_day]||8)-(dayWeight[b.meeting_day]||8));
 
   const PAGE_SIZE = 10;
   const _gPage = state._groupsPage || 0;
@@ -1955,6 +1962,76 @@ function openMemberEdit(m){
 }
 
 /* =====================================================================
+ * MEMBER PROFILE — TAB ACTION HELPERS
+ * (named functions avoid syntax errors from deeply-nested inline onclick)
+ * ===================================================================== */
+function mpApproveSaving(id){
+  const s = state.data.savings.find(x=>x.id===id);
+  if(!s) return;
+  sb.from('pb_savings').update({status:'approved'}).eq('id',id).then(({error})=>{
+    if(error) return toast(error.message,'error');
+    s.status='approved'; render(); toast('Savings entry approved.','success');
+  });
+}
+async function mpDeleteSaving(id){
+  confirmDialog('Delete this savings entry? This cannot be undone.', async()=>{
+    if(!(await ensureFreshToken())) return;
+    const {error} = await sb.from('pb_savings').delete().eq('id',id);
+    if(error) return toast(error.message,'error');
+    state.data.savings = state.data.savings.filter(x=>x.id!==id);
+    audit('delete_saving','pb_savings',id);
+    render(); toast('Savings entry deleted.','warn');
+  },{ title:'Delete Savings Entry', danger:true });
+}
+function mpSavingMenu(ev, id, isPending){
+  const isAdmin = state.staff.role==='admin';
+  const isOfficer = state.staff.role==='officer';
+  const items = [{ label:'✏ Edit Entry', onClick:()=>openEditSaving(id) }];
+  if(isPending && isAdmin){
+    items.push('sep');
+    items.push({ label:'✓ Approve', onClick:()=>mpApproveSaving(id) });
+  }
+  if(isAdmin || isOfficer){
+    items.push('sep');
+    items.push({ label:'🗑 Delete entry', danger:true, onClick:()=>mpDeleteSaving(id) });
+  }
+  showActMenu(ev, items);
+}
+
+function mpApproveRepayment(id){
+  const r = state.data.repayments.find(x=>x.id===id);
+  if(!r) return;
+  sb.from('pb_repayments').update({status:'approved'}).eq('id',id).then(({error})=>{
+    if(error) return toast(error.message,'error');
+    r.status='approved'; render(); toast('Repayment approved.','success');
+  });
+}
+async function mpDeleteRepayment(id){
+  confirmDialog('Delete this repayment entry? This cannot be undone.', async()=>{
+    if(!(await ensureFreshToken())) return;
+    const {error} = await sb.from('pb_repayments').delete().eq('id',id);
+    if(error) return toast(error.message,'error');
+    state.data.repayments = state.data.repayments.filter(x=>x.id!==id);
+    audit('delete_repayment','pb_repayments',id);
+    render(); toast('Repayment entry deleted.','warn');
+  },{ title:'Delete Repayment Entry', danger:true });
+}
+function mpRepaymentMenu(ev, id, isPending){
+  const isAdmin = state.staff.role==='admin';
+  const isOfficer = state.staff.role==='officer';
+  const items = [{ label:'✏ Edit Entry', onClick:()=>openEditRepayment(id) }];
+  if(isPending && isAdmin){
+    items.push('sep');
+    items.push({ label:'✓ Approve', onClick:()=>mpApproveRepayment(id) });
+  }
+  if(isAdmin || isOfficer){
+    items.push('sep');
+    items.push({ label:'🗑 Delete entry', danger:true, onClick:()=>mpDeleteRepayment(id) });
+  }
+  showActMenu(ev, items);
+}
+
+/* =====================================================================
  * PAGE: MEMBER PROFILE
  * ===================================================================== */
 function pageMemberProfile(){
@@ -2036,34 +2113,57 @@ function pageMemberProfile(){
         </div>
       ` : ''}
 
-      ${tab==='savings' ? `
+      ${tab==='savings' ? (()=>{
+          // Compute member-profile savings date range
+          const now = new Date();
+          const isoD = d => d.toISOString().slice(0,10);
+          const today = isoD(now);
+          let mpSvStart = '2000-01-01', mpSvEnd = '2999-12-31';
+          if(_mpSavingsFilter==='today'){ mpSvStart=today; mpSvEnd=today; }
+          else if(_mpSavingsFilter==='yesterday'){ const y=new Date(now); y.setDate(y.getDate()-1); const yd=isoD(y); mpSvStart=yd; mpSvEnd=yd; }
+          else if(_mpSavingsFilter==='week'){ const d=new Date(now); d.setDate(d.getDate()-6); mpSvStart=isoD(d); mpSvEnd=today; }
+          else if(_mpSavingsFilter==='month'){ const d=new Date(now); d.setMonth(d.getMonth()-1); mpSvStart=isoD(d); mpSvEnd=today; }
+          else if(_mpSavingsFilter==='3months'){ const d=new Date(now); d.setMonth(d.getMonth()-3); mpSvStart=isoD(d); mpSvEnd=today; }
+          else if(_mpSavingsFilter==='custom'){ mpSvStart=_mpSavingsCustomStart||today; mpSvEnd=_mpSavingsCustomEnd||today; }
+          const svFiltered = _mpSavingsFilter==='all' ? sv : sv.filter(s=>{
+            const d=(s.meeting_date||'').slice(0,10);
+            return d>=mpSvStart && d<=mpSvEnd;
+          });
+          const mpSvFilterBtns=[['all','All'],['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','Last Month'],['3months','Last 3 Months'],['custom','Custom']];
+          const canEdit = state.staff.role==='admin' || state.staff.role==='officer';
+          let running = 0;
+          const rowsHtml = [...svFiltered].reverse().map(s=>{
+            const isPending = s.status === 'pending';
+            if(!isPending) running += Number(s.amount||0);
+            const officer = state.data.staff.find(x=>x.id===s.recorded_by);
+            return `<tr${isPending?' style="background:var(--warning-50)"':''}>
+              <td>${fmtDate(s.meeting_date)}</td>
+              <td class="num">${KES(s.amount)}${s.edit_notes?'<span title="Edited" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
+              <td class="num" style="color:${isPending?'var(--text-muted)':'var(--success)'}">${isPending?'—':KES(running)}</td>
+              <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
+              <td>${officer?.full_name||'—'}</td>
+              ${canEdit?`<td><button class="act-btn" onclick="mpSavingMenu(event,'${s.id}',${isPending})">···</button></td>`:''}
+            </tr>`;
+          }).reverse().join('');
+          return `
         <div class="card">
           <div class="card-head"><h3>Savings history</h3><div class="sub">Approved total: ${KES(totalSv)}${sv.filter(s=>s.status==='pending').length>0?` · <span style="color:var(--warning);font-weight:600">${sv.filter(s=>s.status==='pending').length} pending approval</span>`:''}</div></div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;padding:10px 16px 0;align-items:center">
+            ${mpSvFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_mpSavingsFilter===k?'btn-primary':'btn-outline'}" onclick="_mpSavingsFilter='${k}';pageMemberProfile()">${l}</button>`).join('')}
+            ${_mpSavingsFilter==='custom'?`
+              <input type="date" value="${_mpSavingsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_mpSavingsCustomStart=this.value;pageMemberProfile()" />
+              <span class="muted" style="font-size:12px">to</span>
+              <input type="date" value="${_mpSavingsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_mpSavingsCustomEnd=this.value;pageMemberProfile()" />
+            `:''}
+          </div>
           <div style="overflow-x:auto"><table class="tbl">
-            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Status</th><th>Recorded by</th>${(state.staff.role==='admin'||state.staff.role==='officer')?'<th></th>':''}</tr></thead>
+            <thead><tr><th>Date</th><th class="num">Amount</th><th>Running total</th><th>Status</th><th>Recorded by</th>${canEdit?'<th></th>':''}</tr></thead>
             <tbody>
-              ${(()=>{
-                let running = 0;
-                const canEdit = state.staff.role==='admin' || state.staff.role==='officer';
-                return [...sv].reverse().map(s=>{
-                  const isPending = s.status === 'pending';
-                  if(!isPending) running += Number(s.amount||0);
-                  const officer = state.data.staff.find(x=>x.id===s.recorded_by);
-                  return `<tr${isPending?' style="background:var(--warning-50)"':''}>
-                    <td>${fmtDate(s.meeting_date)}</td>
-                    <td class="num">${KES(s.amount)}${s.edit_notes?'<span title="Edited: '+s.edit_notes.replace(/"/g,"'")+'" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
-                    <td class="num" style="color:${isPending?'var(--text-muted)':'var(--success)'}">${isPending?'—':KES(running)}</td>
-                    <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
-                    <td>${officer?.full_name||'—'}</td>
-                    ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditSaving('${s.id}')}${isPending&&state.staff.role==='admin'?`,{label:'✓ Approve',onClick:async()=>{const{error}=await sb.from('pb_savings').update({status:'approved'}).eq('id','${s.id}');if(error)return toast(error.message,'error');s.status='approved';render();toast('Savings entry approved.','success');}}`:''}])">···</button></td>`:''}
-                  </tr>`;
-                }).reverse().join('');
-              })()}
-              ${!sv.length?`<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?6:5}"><div class="empty"><h4>No savings yet</h4></div></td></tr>`:''}
+              ${rowsHtml || `<tr><td colspan="${canEdit?6:5}"><div class="empty"><h4>No savings found for this period</h4></div></td></tr>`}
             </tbody>
           </table></div>
-        </div>
-      ` : ''}
+        </div>`;
+        })() : ''}
 
       ${tab==='loans' ? `
         ${allLoans.length ? allLoans.map(l => {
@@ -2142,12 +2242,12 @@ function pageMemberProfile(){
                 const isPending = r.status === 'pending';
                 return `<tr${isPending?' style="background:var(--warning-50)"':''}>
                   <td>${fmtDate(r.meeting_date)}</td>
-                  <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?'<span title="Edited: '+r.edit_notes.replace(/"/g,"'")+'" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
+                  <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?'<span title="Edited" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">✎</span>':''}</td>
                   <td class="num">${KES(r.principal)}</td>
                   <td class="num">${KES(r.interest)}</td>
                   <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
                   <td>${officer?.full_name||'—'}</td>
-                  ${canEdit?`<td><button class="act-btn" onclick="showActMenu(event,[{label:'✏ Edit Entry',onClick:()=>openEditRepayment('${r.id}')}${isPending&&state.staff.role==='admin'?`,{label:'✓ Approve',onClick:async()=>{const{error}=await sb.from('pb_repayments').update({status:'approved'}).eq('id','${r.id}');if(error)return toast(error.message,'error');r.status='approved';render();toast('Repayment approved.','success');}}`:''}])">···</button></td>`:''}
+                  ${canEdit?`<td><button class="act-btn" onclick="mpRepaymentMenu(event,'${r.id}',${isPending})">···</button></td>`:''}
                 </tr>`;
               }).join('') || `<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?7:6}"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
             </tbody>
@@ -2475,6 +2575,22 @@ function pageLoans(){
   const isAdmin = state.staff.role === 'admin';
   const myGroupIds = isAdmin ? [] : state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id);
 
+  // Compute loan date range
+  const loanDateRange = () => {
+    const now = new Date();
+    const iso = d => d.toISOString().slice(0,10);
+    const today = iso(now);
+    if(_loanDateFilter==='all') return { start: '2000-01-01', end: '2999-12-31' };
+    if(_loanDateFilter==='today') return { start: today, end: today };
+    if(_loanDateFilter==='yesterday'){ const y=new Date(now); y.setDate(y.getDate()-1); const yd=iso(y); return { start:yd, end:yd }; }
+    if(_loanDateFilter==='week'){ const d=new Date(now); d.setDate(d.getDate()-6); return { start:iso(d), end:today }; }
+    if(_loanDateFilter==='month'){ const d=new Date(now); d.setMonth(d.getMonth()-1); return { start:iso(d), end:today }; }
+    if(_loanDateFilter==='3months'){ const d=new Date(now); d.setMonth(d.getMonth()-3); return { start:iso(d), end:today }; }
+    if(_loanDateFilter==='custom'){ return { start:_loanCustomStart||today, end:_loanCustomEnd||today }; }
+    return { start:'2000-01-01', end:'2999-12-31' };
+  };
+  const { start: ldrStart, end: ldrEnd } = loanDateRange();
+
   let loans = isAdmin
     ? state.data.loans
     : state.data.loans.filter(l => myGroupIds.includes(l.group_id) || l.officer_id === state.staff.id);
@@ -2482,15 +2598,25 @@ function pageLoans(){
   const tab = state._loanTab || 'active';
   loans = loans.filter(l => tab==='all' ? true : l.status===tab);
 
+  // Apply date filter on start_date
+  loans = loans.filter(l => {
+    const sd = (l.start_date||'').slice(0,10);
+    return sd >= ldrStart && sd <= ldrEnd;
+  });
+
   if (isAdmin && state._loanOfficerFilter) {
     loans = loans.filter(l => l.officer_id === state._loanOfficerFilter);
   }
+
+  const loanFilterBtns = [
+    ['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','Last Month'],['3months','Last 3 Months'],['custom','Custom']
+  ];
 
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Loan portfolio</h1><div class="desc">Asset-backed loans across all members.</div></div>
     </div>
-    <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
       <div class="tabs" style="margin-bottom:0; border-bottom:none;">
         ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
@@ -2504,22 +2630,33 @@ function pageLoans(){
         ` : ''}
       </div>
     </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      <span style="font-size:12px;color:var(--text-muted);margin-right:2px">Start date:</span>
+      ${loanFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_loanDateFilter===k?'btn-primary':'btn-outline'}" onclick="_loanDateFilter='${k}';pageLoans()">${l}</button>`).join('')}
+      ${_loanDateFilter==='custom'?`
+        <input type="date" value="${_loanCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_loanCustomStart=this.value;pageLoans()" />
+        <span class="muted" style="font-size:12px">to</span>
+        <input type="date" value="${_loanCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_loanCustomEnd=this.value;pageLoans()" />
+      `:''}
+    </div>
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>Member</th><th>Asset</th>${isAdmin?'<th>Officer</th>':''}<th>Start Date</th><th class="num">Loan value</th>
+          <th>Member</th><th>Group</th><th>Asset</th>${isAdmin?'<th>Officer</th>':''}<th>Start Date</th><th class="num">Loan value</th>
           <th class="num">Weekly</th><th class="num">Paid</th><th class="num">Outstanding</th>
           <th>Status</th><th></th>
         </tr></thead>
         <tbody>
           ${loans.map(l => {
             const m = state.data.members.find(x=>x.id===l.member_id);
+            const grp = state.data.groups.find(x=>x.id===l.group_id);
             const off = state.data.staff.find(x=>x.id===l.officer_id);
             const paid = loanPaid(l.id);
             const out = Number(l.total_payable)-paid;
             const bcls = l.status==='completed'?'b-grey':l.status==='defaulted'?'b-red':'b-blue';
             return `<tr style="${l.status==='completed'?'background:var(--surface-2);color:var(--text-muted)':l.status==='defaulted'?'background:var(--danger-50)':''}">
               <td><b>${m?.full_name||'—'}</b></td>
+              <td>${grp?.name||'—'}</td>
               <td>${l.asset_name}</td>
               ${isAdmin ? `<td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'—'}</td>` : ''}
               <td>${fmtDate(l.start_date)}</td>
@@ -2530,7 +2667,7 @@ function pageLoans(){
               <td><span class="badge ${bcls}">${l.status}</span></td>
               <td><button class="act-btn" onclick="loanActions(event,'${l.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="${isAdmin?10:9}"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="${isAdmin?11:10}"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -3305,7 +3442,16 @@ function ordUpdateSummary(){
 function filterOrderMembers(){
   const q = ($('ord-mem-search').value||'').toLowerCase();
   const list = $('ord-mem-list'); if(!list) return;
-  const matches = state.data.members.filter(m=>m.status==='active' && (m.full_name.toLowerCase().includes(q)||(m.national_id||'').includes(q))).slice(0,10);
+  const isAdmin = state.staff.role === 'admin';
+  const matches = state.data.members.filter(m => {
+    if(m.status !== 'active') return false;
+    if(!isAdmin){
+      // Officers only see members whose group is assigned to them
+      const grp = state.data.groups.find(g => g.id === m.group_id);
+      if(!grp || grp.officer_id !== state.staff.id) return false;
+    }
+    return m.full_name.toLowerCase().includes(q) || (m.national_id||'').includes(q);
+  }).slice(0,10);
   list.style.display = matches.length ? 'block' : 'none';
   list.innerHTML = matches.map(m=>{
     const g = state.data.groups.find(x=>x.id===m.group_id);
@@ -4933,6 +5079,7 @@ function pageSavings(){
 function savingsRowActions(ev, id){
   const sav = state.data.savings.find(x=>x.id===id);
   const isAdmin = state.staff.role === 'admin';
+  const isOfficer = state.staff.role === 'officer';
   const items = [
     { label: '✏ Edit entry', onClick: () => openEditSaving(id) }
   ];
@@ -4945,6 +5092,22 @@ function savingsRowActions(ev, id){
       render();
       toast('Savings entry approved.', 'success');
     }});
+  }
+  if(isAdmin || isOfficer){
+    items.push('sep');
+    items.push({ label: '🗑 Delete entry', danger: true, onClick: () => confirmDialog(
+      'Delete this savings entry? This cannot be undone.',
+      async () => {
+        if(!(await ensureFreshToken())) return;
+        const { error } = await sb.from('pb_savings').delete().eq('id', id);
+        if(error) return toast(error.message, 'error');
+        state.data.savings = state.data.savings.filter(x => x.id !== id);
+        audit('delete_saving', 'pb_savings', id);
+        render();
+        toast('Savings entry deleted.', 'warn');
+      },
+      { title: 'Delete Savings Entry', danger: true }
+    )});
   }
   showActMenu(ev, items);
 }
@@ -5109,6 +5272,7 @@ function pageRepayments(){
 function repRowActions(ev, id){
   const rep = state.data.repayments.find(x=>x.id===id);
   const isAdmin = state.staff.role === 'admin';
+  const isOfficer = state.staff.role === 'officer';
   const items = [
     { label: '✏ Edit entry', onClick: () => openEditRepayment(id) }
   ];
@@ -5121,6 +5285,22 @@ function repRowActions(ev, id){
       render();
       toast('Repayment entry approved.', 'success');
     }});
+  }
+  if(isAdmin || isOfficer){
+    items.push('sep');
+    items.push({ label: '🗑 Delete entry', danger: true, onClick: () => confirmDialog(
+      'Delete this repayment entry? This cannot be undone.',
+      async () => {
+        if(!(await ensureFreshToken())) return;
+        const { error } = await sb.from('pb_repayments').delete().eq('id', id);
+        if(error) return toast(error.message, 'error');
+        state.data.repayments = state.data.repayments.filter(x => x.id !== id);
+        audit('delete_repayment', 'pb_repayments', id);
+        render();
+        toast('Repayment entry deleted.', 'warn');
+      },
+      { title: 'Delete Repayment Entry', danger: true }
+    )});
   }
   showActMenu(ev, items);
 }
