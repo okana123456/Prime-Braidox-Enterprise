@@ -2498,7 +2498,7 @@ function renderMeetList(){
   const m = state._meet;
   const host = $('meet-list');
   if(!m.groupId){ host.innerHTML = `<div class="card card-pad empty"><h4>Select a group</h4><p>Choose a group to load its members for the meeting session.</p></div>`; return; }
-  const members = state.data.members.filter(x=>x.group_id===m.groupId && x.status==='active');
+  const members = state.data.members.filter(x=>x.group_id===m.groupId && (!x.status || x.status==='active'));
   if(!members.length){ host.innerHTML = `<div class="card card-pad empty"><h4>No active members</h4><p>Register members to this group before recording a meeting.</p></div>`; return; }
 
   host.innerHTML = `
@@ -2580,7 +2580,7 @@ function renderMeetList(){
 async function submitMeeting(){
   const m = state._meet;
   if(!m.groupId || !m.date) return toast('Group and date are required.', 'error');
-  const members = state.data.members.filter(x=>x.group_id===m.groupId && x.status==='active');
+  const members = state.data.members.filter(x=>x.group_id===m.groupId && (!x.status || x.status==='active'));
 
   let meetingId = null;
   const existing = state.data.meetings.find(x=>x.group_id===m.groupId && x.meeting_date===m.date);
@@ -2700,7 +2700,20 @@ function pageArrears(){
   const tab = state._arrearsTab || 'arrears';
   const offFilter = state._arrearsOfficerFilter || '';
   const grpFilter = state._arrearsGroupFilter || '';
-  let filtered = report.filter(r => tab === 'all' ? true : r.category === tab);
+
+  // Strict separation: each bucket is mutually exclusive
+  // arrears:     paid < expected (overdue) — regardless of next due date
+  // duetoday:    arrears === 0 AND next installment is exactly today
+  // duethisweek: arrears === 0 AND next installment is within next 7 days (but not today)
+  const arrearsLoans     = report.filter(r => r.arrears > 0);
+  const duetodayLoans    = report.filter(r => r.arrears === 0 && r.category === 'duetoday');
+  const duethisweekLoans = report.filter(r => r.arrears === 0 && r.category === 'duethisweek');
+
+  let filtered = tab === 'arrears'     ? arrearsLoans
+               : tab === 'duetoday'    ? duetodayLoans
+               : tab === 'duethisweek' ? duethisweekLoans
+               : report; // 'all'
+
   if (isAdmin && offFilter) filtered = filtered.filter(r => r.loan.officer_id === offFilter);
   if (grpFilter) filtered = filtered.filter(r => r.loan.group_id === grpFilter);
 
@@ -2717,9 +2730,20 @@ function pageArrears(){
     ['all','All Time'],['week','Last 7 Days'],['month','Last Month'],['3months','Last 3 Months'],['6months','Last 6 Months'],['custom','Custom']
   ];
 
+  // Column count helper
+  const colCount = isAdmin
+    ? (tab === 'arrears' ? 10 : 9)
+    : (tab === 'arrears' ? 9  : 8);
+
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Due &amp; Arrears</h1><div class="desc">Track missed payments and upcoming collections.</div></div>
+      <div>
+        <h1>Due &amp; Arrears</h1>
+        <div class="desc">Track missed payments and upcoming collections.</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-outline btn-sm" onclick="openCollectionSheetModal()" title="Export today's collection sheet">📋 Collection Sheet</button>
+      </div>
     </div>
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -2734,12 +2758,18 @@ function pageArrears(){
 
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;align-items:flex-end">
       <div class="tabs" style="margin-bottom:0;border-bottom:none">
-        ${[
-          ['arrears',     `In Arrears (${report.filter(r=>r.category==='arrears').length})`],
-          ['duetoday',    `Due Today (${report.filter(r=>r.category==='duetoday').length})`],
-          ['duethisweek', `Due Next 7 Days (${report.filter(r=>r.category==='duethisweek').length})`],
-          ['all',         `All Active (${report.length})`]
-        ].map(([k, label]) => `<button class="${tab===k?'active':''}" onclick="state._arrearsTab='${k}';pageArrears()">${label}</button>`).join('')}
+        <button class="${tab==='arrears'?'active':''}" onclick="state._arrearsTab='arrears';pageArrears()">
+          🔴 In Arrears (${arrearsLoans.length})
+        </button>
+        <button class="${tab==='duetoday'?'active':''}" onclick="state._arrearsTab='duetoday';pageArrears()">
+          🟡 Due Today (${duetodayLoans.length})
+        </button>
+        <button class="${tab==='duethisweek'?'active':''}" onclick="state._arrearsTab='duethisweek';pageArrears()">
+          🟢 Due Next 7 Days (${duethisweekLoans.length})
+        </button>
+        <button class="${tab==='all'?'active':''}" onclick="state._arrearsTab='all';pageArrears()">
+          All Active (${report.length})
+        </button>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select style="max-width:200px;font-size:13px" onchange="state._arrearsGroupFilter=this.value;pageArrears()">
@@ -2754,29 +2784,53 @@ function pageArrears(){
       </div>
     </div>
 
+    ${tab==='arrears' ? `
+    <div style="background:var(--danger-50,#fff1f0);border:1px solid var(--danger);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:var(--danger);margin-bottom:8px">
+      ⚠️ <b>In Arrears</b> — these clients have missed one or more installment payments. Amount shown includes the base arrears plus 20 KES/week penalty.
+    </div>` : ''}
+    ${tab==='duetoday' ? `
+    <div style="background:#fffbeb;border:1px solid var(--warning);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:#92400e;margin-bottom:8px">
+      📅 <b>Due Today</b> — these clients have a scheduled payment <b>today</b> and are currently up to date. They do <b>not</b> have arrears.
+    </div>` : ''}
+
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
           <th>Member</th><th>Group</th>${isAdmin?'<th>Officer</th>':''}
           <th>Asset</th><th>Start Date</th>
-          <th class="num">${tab==='arrears'?'Arrears (KES)':'Amount Due (KES)'}</th>
+          <th class="num">${tab==='arrears'?'Arrears + Penalty (KES)':'Amount Due (KES)'}</th>
           <th class="num">Weekly Inst.</th>
           ${tab==='arrears'?'<th class="num">Penalty</th>':''}
-          <th>Next Due</th><th>Status</th>
+          <th>Next Due Date</th><th>Status</th>
         </tr></thead>
         <tbody>
-          ${filtered.length ? filtered.map(r => `<tr>
-            <td><b>${r.member?.full_name||'—'}</b><div class="muted" style="font-size:11px">${r.member?.phone||''}</div></td>
-            <td>${r.group?.name||'—'}</td>
-            ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||'—'}</td>` : ''}
-            <td>${r.loan.asset_name}</td>
-            <td>${fmtDate(r.loan.start_date)}</td>
-            <td class="num"><b style="color:${r.arrears>0?'var(--danger)':r.category==='duetoday'?'var(--warning)':'var(--success)'}">${KES(r.arrears>0?r.arrears:r.expectedInstallment)}</b></td>
-            <td class="num">${KES(r.expectedInstallment)}</td>
-            ${tab==='arrears'?`<td class="num" style="color:var(--danger);font-size:12px">${r.penalty>0?'+'+KES(r.penalty):'—'}</td>`:''}
-            <td>${fmtDate(r.nextDueDate)}</td>
-            <td><span class="badge ${r.arrears>0?'b-red':r.category==='duetoday'?'b-yellow':'b-green'}">${r.arrears>0?'In Arrears':r.category==='duetoday'?'Due Today':'On Track'}</span></td>
-          </tr>`).join('') : `<tr><td colspan="${isAdmin?(tab==='arrears'?10:9):(tab==='arrears'?9:8)}"><div class="empty"><h4>No records found</h4><p>No loans match the current filters.</p></div></td></tr>`}
+          ${filtered.length ? filtered.map(r => {
+            const amountDisplay = tab==='arrears' ? r.arrears : r.expectedInstallment;
+            const statusBadge   = tab==='arrears'     ? '<span class="badge b-red">In Arrears</span>'
+                                : tab==='duetoday'    ? '<span class="badge b-yellow">Due Today</span>'
+                                : tab==='duethisweek' ? '<span class="badge b-green">Due Soon</span>'
+                                : r.arrears>0         ? '<span class="badge b-red">In Arrears</span>'
+                                : r.category==='duetoday' ? '<span class="badge b-yellow">Due Today</span>'
+                                : '<span class="badge b-green">On Track</span>';
+            const amtColor = tab==='arrears'?'var(--danger)':tab==='duetoday'?'var(--warning)':'var(--success)';
+            return `<tr>
+              <td><b>${r.member?.full_name||'—'}</b><div class="muted" style="font-size:11px">${r.member?.phone||''}</div></td>
+              <td>${r.group?.name||'—'}</td>
+              ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||'—'}</td>` : ''}
+              <td>${r.loan.asset_name}</td>
+              <td>${fmtDate(r.loan.start_date)}</td>
+              <td class="num"><b style="color:${amtColor}">${KES(amountDisplay)}</b></td>
+              <td class="num">${KES(r.expectedInstallment)}</td>
+              ${tab==='arrears'?`<td class="num" style="color:var(--danger);font-size:12px">${r.penalty>0?'+'+KES(r.penalty):'—'}</td>`:''}
+              <td>${fmtDate(r.nextDueDate)}</td>
+              <td>${statusBadge}</td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="${colCount}"><div class="empty"><h4>No records found</h4><p>${
+            tab==='arrears'?'No loans are currently in arrears — great!':
+            tab==='duetoday'?'No loans are due today.':
+            tab==='duethisweek'?'No loans due in the next 7 days.':
+            'No active loans match the current filters.'
+          }</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2846,7 +2900,7 @@ function pageLoans(){
         ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${tab==='active' ? `<button class="btn btn-outline btn-sm" onclick="openCollectionSheetModal()" title="Export collection sheet as Excel">📋 Collection Sheet</button>` : ''}
+        ${tab==='active' ? `` : ''}
         <select style="max-width:200px;font-size:13px" onchange="state._loanGroupFilter=this.value; pageLoans()">
           <option value="">All Groups</option>
           ${visibleGroups.map(g=>`<option value="${g.id}" ${state._loanGroupFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
@@ -3678,7 +3732,8 @@ function filterOrderMembers(){
   const list = $('ord-mem-list'); if(!list) return;
   const isAdmin = state.staff.role === 'admin';
   const matches = state.data.members.filter(m => {
-    if(m.status !== 'active') return false;
+    // Allow active members AND members with no explicit status (legacy records)
+    if(m.status && m.status !== 'active') return false;
     if(!isAdmin){
       // Officers only see members whose group is assigned to them
       const grp = state.data.groups.find(g => g.id === m.group_id);
