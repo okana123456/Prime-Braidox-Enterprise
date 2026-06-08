@@ -1476,7 +1476,7 @@ function dashArrFilter(){
     for (let w = 1; w <= 1040; w++) {
       const d = new Date(startDate); d.setDate(d.getDate() + 7 * w);
       const ds = d.toISOString().slice(0,10);
-      if (ds > today) { nextDueDate = ds; break; }
+      if (ds >= today) { nextDueDate = ds; break; }
     }
 
     let category = 'ontrack';
@@ -1845,15 +1845,39 @@ function pageMembers(){
 function memberActions(ev, id){
   const m = state.data.members.find(x=>x.id===id);
   const isAdmin = state.staff.role==='admin';
+  // Detect duplicates: same national_id or same full_name+phone as another member
+  const isDuplicate = state.data.members.some(x =>
+    x.id !== id && (
+      (x.national_id && x.national_id === m.national_id) ||
+      (x.full_name && x.phone && x.full_name === m.full_name && x.phone === m.phone)
+    )
+  );
   showActMenu(ev, [
     { label:'View profile', onClick: ()=>{ go('memberProfile', { memberId: id }); } },
     { label:'Edit details', onClick: ()=>openMemberEdit(m) },
     'sep',
-    ...(isAdmin ? [{ label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(`Deactivate "${m.full_name}"? They will no longer appear in active member lists.`, async()=>{
-      const { error } = await sb.from('pb_members').update({ status:'inactive' }).eq('id',id);
-      if(error) return toast(error.message,'error');
-      m.status='inactive'; audit('deactivate','pb_members',id); render(); toast('Member deactivated','success');
-    }, { title:'Deactivate member', danger:true }) }] : [])
+    ...(isAdmin ? [
+      { label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(`Deactivate "${m.full_name}"? They will no longer appear in active member lists.`, async()=>{
+        const { error } = await sb.from('pb_members').update({ status:'inactive' }).eq('id',id);
+        if(error) return toast(error.message,'error');
+        m.status='inactive'; audit('deactivate','pb_members',id); render(); toast('Member deactivated','success');
+      }, { title:'Deactivate member', danger:true }) },
+      ...(isDuplicate ? [{
+        label: '🗑 Delete Duplicate', danger: true, onClick: () => confirmDialog(
+          `Permanently delete "${m.full_name}"? This is flagged as a potential duplicate entry. All associated data (loans, savings, repayments) linked to this record will remain but the member record will be removed.`,
+          async () => {
+            if(!(await ensureFreshToken())) return;
+            const { error } = await sb.from('pb_members').delete().eq('id', id);
+            if(error) return toast('Delete failed: ' + error.message, 'error');
+            state.data.members = state.data.members.filter(x => x.id !== id);
+            audit('delete_duplicate_member', 'pb_members', id, { full_name: m.full_name, national_id: m.national_id }, null);
+            render();
+            toast(`Duplicate member "${m.full_name}" deleted.`, 'warn');
+          },
+          { title: 'Delete Duplicate Member', danger: true }
+        )
+      }] : [])
+    ] : [])
   ]);
 }
 
@@ -1914,12 +1938,17 @@ function renderWizardStep(){
     </div>`;
   if(s===2){
     const g = state.data.groups.find(x=>x.id===d.group_id);
+    const isAdmin = state.staff.role === 'admin';
+    // Officers can only see/select groups assigned to them
+    const availableGroups = isAdmin
+      ? state.data.groups.filter(x=>x.status==='active')
+      : state.data.groups.filter(x=>x.status==='active' && x.officer_id===state.staff.id);
     return `
       <div class="grid-2">
         <div class="field"><label>Select group *</label>
           <select id="w-group_id" required>
             <option value="">— Select —</option>
-            ${state.data.groups.filter(x=>x.status==='active').map(x=>`<option value="${x.id}" ${d.group_id===x.id?'selected':''}>${x.name}</option>`).join('')}
+            ${availableGroups.map(x=>`<option value="${x.id}" ${d.group_id===x.id?'selected':''}>${x.name}</option>`).join('')}
           </select>
         </div>
         <div class="field"><label>Meeting day (from group)</label><input id="w-meeting_day" disabled value="${g?.meeting_day||'— select group —'}" /></div>
@@ -2066,7 +2095,7 @@ function openMemberEdit(m){
         <div class="field"><label>Occupation</label><input name="occupation" value="${m.occupation||''}" /></div>
         <div class="field"><label>Address</label><input name="address" value="${m.address||''}" /></div>
         <div class="field"><label>Group</label>
-          <select name="group_id">${state.data.groups.map(g=>`<option value="${g.id}" ${m.group_id===g.id?'selected':''}}>${g.name}</option>`).join('')}</select>
+          <select name="group_id">${state.data.groups.map(g=>`<option value="${g.id}" ${m.group_id===g.id?'selected':''}>${g.name}</option>`).join('')}</select>
         </div>
       </div>
       <div class="divider"></div>
@@ -2303,9 +2332,9 @@ function pageMemberProfile(){
           <div style="display:flex;gap:5px;flex-wrap:wrap;padding:10px 16px 0;align-items:center">
             ${mpSvFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_mpSavingsFilter===k?'btn-primary':'btn-outline'}" onclick="_mpSavingsFilter='${k}';pageMemberProfile()">${l}</button>`).join('')}
             ${_mpSavingsFilter==='custom'?`
-              <input type="date" value="${_mpSavingsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_mpSavingsCustomStart=this.value;pageMemberProfile()" />
+              <input type="date" id="mp-sav-start" value="${_mpSavingsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
               <span class="muted" style="font-size:12px">to</span>
-              <input type="date" value="${_mpSavingsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_mpSavingsCustomEnd=this.value;pageMemberProfile()" />
+              <input type="date" id="mp-sav-end" value="${_mpSavingsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
             `:''}
           </div>
           <div style="overflow-x:auto"><table class="tbl">
@@ -2426,6 +2455,11 @@ function pageMemberProfile(){
       ` : ''}
     </div>
   `;
+  // Attach event listeners for member profile savings custom date range
+  const mpSavStartEl = document.getElementById('mp-sav-start');
+  const mpSavEndEl = document.getElementById('mp-sav-end');
+  if(mpSavStartEl) mpSavStartEl.addEventListener('change', e => { _mpSavingsCustomStart = e.target.value; pageMemberProfile(); });
+  if(mpSavEndEl) mpSavEndEl.addEventListener('change', e => { _mpSavingsCustomEnd = e.target.value; pageMemberProfile(); });
 }
 
 /* =====================================================================
@@ -2639,31 +2673,45 @@ function pageArrears(){
     const weeksElapsed = Math.max(0, Math.floor((new Date(today) - startDate) / msPerWeek));
     const weekly = Number(l.weekly_installment) || 0;
     const expectedPaid = Math.min(weeksElapsed * weekly, Number(l.total_payable) || 0);
-    const arrears = Math.max(0, expectedPaid - paid);
 
+    // Penalty: add 20 KES for each week the loan has been overdue (i.e. arrears > 0)
+    const baseArrears = Math.max(0, expectedPaid - paid);
+    const overdueWeeks = baseArrears > 0 && weekly > 0 ? Math.floor(baseArrears / weekly) : 0;
+    const penalty = overdueWeeks * 20;
+    const arrears = baseArrears > 0 ? baseArrears + penalty : 0;
+
+    // Determine next upcoming due date (the next installment date after today)
     let nextDueDate = null;
     for (let w = 1; w <= 1040; w++) {
       const d = new Date(startDate); d.setDate(d.getDate() + 7 * w);
       const ds = d.toISOString().slice(0,10);
-      if (ds > today) { nextDueDate = ds; break; }
+      if (ds >= today) { nextDueDate = ds; break; }
     }
 
+    // Category: a loan is "duetoday" if the next due date is exactly today AND there are no arrears
     let category = 'ontrack';
     if (arrears > 0) category = 'arrears';
     else if (nextDueDate === today) category = 'duetoday';
     else if (nextDueDate && nextDueDate <= nextWeekISO) category = 'duethisweek';
 
-    return { loan: l, member: mem, group: g, officer: off, paid, arrears, nextDueDate, expectedInstallment: weekly, category };
+    return { loan: l, member: mem, group: g, officer: off, paid, arrears, penalty, overdueWeeks, nextDueDate, expectedInstallment: weekly, category };
   });
 
   const tab = state._arrearsTab || 'arrears';
   const offFilter = state._arrearsOfficerFilter || '';
+  const grpFilter = state._arrearsGroupFilter || '';
   let filtered = report.filter(r => tab === 'all' ? true : r.category === tab);
   if (isAdmin && offFilter) filtered = filtered.filter(r => r.loan.officer_id === offFilter);
+  if (grpFilter) filtered = filtered.filter(r => r.loan.group_id === grpFilter);
 
   const officersWithLoans = isAdmin
     ? state.data.staff.filter(s => s.role === 'officer' && report.some(r => r.loan.officer_id === s.id))
     : [];
+
+  // Groups visible to this user
+  const visibleGroups = isAdmin
+    ? state.data.groups
+    : state.data.groups.filter(g => myGroupIds.includes(g.id));
 
   const filterBtns = [
     ['all','All Time'],['week','Last 7 Days'],['month','Last Month'],['3months','Last 3 Months'],['6months','Last 6 Months'],['custom','Custom']
@@ -2671,16 +2719,16 @@ function pageArrears(){
 
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Due & Arrears</h1><div class="desc">Track missed payments and upcoming collections.</div></div>
+      <div><h1>Due &amp; Arrears</h1><div class="desc">Track missed payments and upcoming collections.</div></div>
     </div>
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
       <span style="font-size:12px;color:var(--text-muted);margin-right:2px">Loan start date:</span>
       ${filterBtns.map(([k,l]) => `<button class="btn btn-sm ${_arrearsFilter===k?'btn-primary':'btn-outline'}" onclick="_arrearsFilter='${k}';pageArrears()">${l}</button>`).join('')}
       ${_arrearsFilter==='custom' ? `
-        <input type="date" value="${_arrearsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_arrearsCustomStart=this.value;pageArrears()" />
+        <input type="date" id="arr-custom-start" value="${_arrearsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
         <span class="muted" style="font-size:12px">to</span>
-        <input type="date" value="${_arrearsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_arrearsCustomEnd=this.value;pageArrears()" />
+        <input type="date" id="arr-custom-end" value="${_arrearsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       ` : ''}
     </div>
 
@@ -2693,18 +2741,28 @@ function pageArrears(){
           ['all',         `All Active (${report.length})`]
         ].map(([k, label]) => `<button class="${tab===k?'active':''}" onclick="state._arrearsTab='${k}';pageArrears()">${label}</button>`).join('')}
       </div>
-      ${isAdmin && officersWithLoans.length ? `
-        <select style="max-width:200px" onchange="state._arrearsOfficerFilter=this.value;pageArrears()">
-          <option value="">All Officers</option>
-          ${officersWithLoans.map(o=>`<option value="${o.id}" ${offFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
-        </select>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select style="max-width:200px;font-size:13px" onchange="state._arrearsGroupFilter=this.value;pageArrears()">
+          <option value="">All Groups</option>
+          ${visibleGroups.map(g=>`<option value="${g.id}" ${grpFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
+        </select>
+        ${isAdmin && officersWithLoans.length ? `
+          <select style="max-width:200px;font-size:13px" onchange="state._arrearsOfficerFilter=this.value;pageArrears()">
+            <option value="">All Officers</option>
+            ${officersWithLoans.map(o=>`<option value="${o.id}" ${offFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
+          </select>` : ''}
+      </div>
     </div>
 
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
           <th>Member</th><th>Group</th>${isAdmin?'<th>Officer</th>':''}
-          <th>Asset</th><th>Start Date</th><th class="num">Arrears (KES)</th><th class="num">Weekly Inst.</th><th>Next Due</th><th>Status</th>
+          <th>Asset</th><th>Start Date</th>
+          <th class="num">${tab==='arrears'?'Arrears (KES)':'Amount Due (KES)'}</th>
+          <th class="num">Weekly Inst.</th>
+          ${tab==='arrears'?'<th class="num">Penalty</th>':''}
+          <th>Next Due</th><th>Status</th>
         </tr></thead>
         <tbody>
           ${filtered.length ? filtered.map(r => `<tr>
@@ -2713,15 +2771,21 @@ function pageArrears(){
             ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||'—'}</td>` : ''}
             <td>${r.loan.asset_name}</td>
             <td>${fmtDate(r.loan.start_date)}</td>
-            <td class="num"><b style="color:${r.arrears>0?'var(--danger)':'var(--success)'}">${KES(r.arrears)}</b></td>
+            <td class="num"><b style="color:${r.arrears>0?'var(--danger)':r.category==='duetoday'?'var(--warning)':'var(--success)'}">${KES(r.arrears>0?r.arrears:r.expectedInstallment)}</b></td>
             <td class="num">${KES(r.expectedInstallment)}</td>
+            ${tab==='arrears'?`<td class="num" style="color:var(--danger);font-size:12px">${r.penalty>0?'+'+KES(r.penalty):'—'}</td>`:''}
             <td>${fmtDate(r.nextDueDate)}</td>
             <td><span class="badge ${r.arrears>0?'b-red':r.category==='duetoday'?'b-yellow':'b-green'}">${r.arrears>0?'In Arrears':r.category==='duetoday'?'Due Today':'On Track'}</span></td>
-          </tr>`).join('') : `<tr><td colspan="${isAdmin?9:8}"><div class="empty"><h4>No records found</h4><p>No loans match the current filters.</p></div></td></tr>`}
+          </tr>`).join('') : `<tr><td colspan="${isAdmin?(tab==='arrears'?10:9):(tab==='arrears'?9:8)}"><div class="empty"><h4>No records found</h4><p>No loans match the current filters.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
   `;
+  // Fix year-typing: attach event listeners for custom date range
+  const arrStartEl = document.getElementById('arr-custom-start');
+  const arrEndEl = document.getElementById('arr-custom-end');
+  if(arrStartEl) arrStartEl.addEventListener('change', e => { _arrearsCustomStart = e.target.value; pageArrears(); });
+  if(arrEndEl) arrEndEl.addEventListener('change', e => { _arrearsCustomEnd = e.target.value; pageArrears(); });
 }
 function pageLoans(){
   const isAdmin = state.staff.role === 'admin';
@@ -2760,6 +2824,15 @@ function pageLoans(){
     loans = loans.filter(l => l.officer_id === state._loanOfficerFilter);
   }
 
+  // Fix 11: Group filter for loans
+  if (state._loanGroupFilter) {
+    loans = loans.filter(l => l.group_id === state._loanGroupFilter);
+  }
+
+  const visibleGroups = isAdmin
+    ? state.data.groups
+    : state.data.groups.filter(g => myGroupIds.includes(g.id));
+
   const loanFilterBtns = [
     ['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','Last Month'],['3months','Last 3 Months'],['custom','Custom']
   ];
@@ -2774,6 +2847,10 @@ function pageLoans(){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         ${tab==='active' ? `<button class="btn btn-outline btn-sm" onclick="openCollectionSheetModal()" title="Export collection sheet as Excel">📋 Collection Sheet</button>` : ''}
+        <select style="max-width:200px;font-size:13px" onchange="state._loanGroupFilter=this.value; pageLoans()">
+          <option value="">All Groups</option>
+          ${visibleGroups.map(g=>`<option value="${g.id}" ${state._loanGroupFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
+        </select>
         ${isAdmin ? `
         <select style="max-width:200px" onchange="state._loanOfficerFilter=this.value; pageLoans()">
           <option value="">All Officers</option>
@@ -2786,9 +2863,9 @@ function pageLoans(){
       <span style="font-size:12px;color:var(--text-muted);margin-right:2px">Start date:</span>
       ${loanFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_loanDateFilter===k?'btn-primary':'btn-outline'}" onclick="_loanDateFilter='${k}';pageLoans()">${l}</button>`).join('')}
       ${_loanDateFilter==='custom'?`
-        <input type="date" value="${_loanCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_loanCustomStart=this.value;pageLoans()" />
+        <input type="date" id="loan-custom-start" value="${_loanCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
         <span class="muted" style="font-size:12px">to</span>
-        <input type="date" value="${_loanCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_loanCustomEnd=this.value;pageLoans()" />
+        <input type="date" id="loan-custom-end" value="${_loanCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       `:''}
     </div>
     <div class="table-wrap">
@@ -2824,6 +2901,11 @@ function pageLoans(){
       </table>
     </div>
   `;
+  // Attach listeners for custom date range inputs (avoids year-typing issue)
+  const loanStartEl = document.getElementById('loan-custom-start');
+  const loanEndEl = document.getElementById('loan-custom-end');
+  if(loanStartEl) loanStartEl.addEventListener('change', e => { _loanCustomStart = e.target.value; pageLoans(); });
+  if(loanEndEl) loanEndEl.addEventListener('change', e => { _loanCustomEnd = e.target.value; pageLoans(); });
 }
 function loanActions(ev, id){
   const l = state.data.loans.find(x=>x.id===id);
@@ -4861,9 +4943,9 @@ function pageAccounting(){
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px">
       ${filterBtns.map(([k,l])=>`<button class="btn btn-sm ${_dashFilter===k?'btn-primary':'btn-outline'}" onclick="_dashFilter='${k}';pageAccounting()">${l}</button>`).join('')}
-      ${_dashFilter==='custom'?`<input type="date" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomStart=this.value;pageAccounting()" />
+      ${_dashFilter==='custom'?`<input type="date" id="acc-custom-start" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       <span class="muted" style="font-size:12px">to</span>
-      <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageAccounting()" />`:''}
+      <input type="date" id="acc-custom-end" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />`:''}
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px">
@@ -4920,6 +5002,11 @@ function pageAccounting(){
       </table></div>
     </div>` : ''}
   `;
+  // Fix 7: Attach event listeners for accounting custom date range
+  const accStartEl = document.getElementById('acc-custom-start');
+  const accEndEl = document.getElementById('acc-custom-end');
+  if(accStartEl) accStartEl.addEventListener('change', e => { _dashCustomStart = e.target.value; pageAccounting(); });
+  if(accEndEl) accEndEl.addEventListener('change', e => { _dashCustomEnd = e.target.value; pageAccounting(); });
 }
 /* =====================================================================
  * PAGE: EXPENSES
@@ -4981,9 +5068,9 @@ function pageExpenses(){
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
       ${dateFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_expDateFilter===k?'btn-primary':'btn-outline'}" onclick="_expDateFilter='${k}';pageExpenses()">${l}</button>`).join('')}
       ${_expDateFilter==='custom'?`
-        <input type="date" value="${_expCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_expCustomStart=this.value;pageExpenses()" />
+        <input type="date" id="exp-custom-start" value="${_expCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
         <span class="muted" style="font-size:12px">to</span>
-        <input type="date" value="${_expCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_expCustomEnd=this.value;pageExpenses()" />
+        <input type="date" id="exp-custom-end" value="${_expCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       `:''}
     </div>
 
@@ -5012,6 +5099,11 @@ function pageExpenses(){
       </table>
     </div>
   `;
+  // Attach event listeners for custom date range inputs
+  const expStartEl = document.getElementById('exp-custom-start');
+  const expEndEl = document.getElementById('exp-custom-end');
+  if(expStartEl) expStartEl.addEventListener('change', e => { _expCustomStart = e.target.value; pageExpenses(); });
+  if(expEndEl) expEndEl.addEventListener('change', e => { _expCustomEnd = e.target.value; pageExpenses(); });
 }
 
 function expenseActions(ev, id){
@@ -5182,9 +5274,9 @@ function pageSavings(){
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
       ${dateFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_savingsDateFilter===k?'btn-primary':'btn-outline'}" onclick="_savingsDateFilter='${k}';pageSavings()">${l}</button>`).join('')}
       ${_savingsDateFilter==='custom'?`
-        <input type="date" value="${_savingsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_savingsCustomStart=this.value;pageSavings()" />
+        <input type="date" id="sav-custom-start" value="${_savingsCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
         <span class="muted" style="font-size:12px">to</span>
-        <input type="date" value="${_savingsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_savingsCustomEnd=this.value;pageSavings()" />
+        <input type="date" id="sav-custom-end" value="${_savingsCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       `:''}
     </div>
 
@@ -5226,6 +5318,11 @@ function pageSavings(){
       </table>
     </div>
   `;
+  // Attach event listeners for custom date range inputs
+  const savStartEl = document.getElementById('sav-custom-start');
+  const savEndEl = document.getElementById('sav-custom-end');
+  if(savStartEl) savStartEl.addEventListener('change', e => { _savingsCustomStart = e.target.value; pageSavings(); });
+  if(savEndEl) savEndEl.addEventListener('change', e => { _savingsCustomEnd = e.target.value; pageSavings(); });
 }
 
 function savingsRowActions(ev, id){
@@ -5369,9 +5466,9 @@ function pageRepayments(){
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
       ${dateFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_repDateFilter===k?'btn-primary':'btn-outline'}" onclick="_repDateFilter='${k}';pageRepayments()">${l}</button>`).join('')}
       ${_repDateFilter==='custom'?`
-        <input type="date" value="${_repCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_repCustomStart=this.value;pageRepayments()" />
+        <input type="date" id="rep-custom-start" value="${_repCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
         <span class="muted" style="font-size:12px">to</span>
-        <input type="date" value="${_repCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_repCustomEnd=this.value;pageRepayments()" />
+        <input type="date" id="rep-custom-end" value="${_repCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       `:''}
     </div>
 
@@ -5419,6 +5516,11 @@ function pageRepayments(){
       </table>
     </div>
   `;
+  // Attach listeners for custom date range inputs (avoids year-typing issue with inline onchange)
+  const repStartEl = document.getElementById('rep-custom-start');
+  const repEndEl = document.getElementById('rep-custom-end');
+  if(repStartEl) repStartEl.addEventListener('change', e => { _repCustomStart = e.target.value; pageRepayments(); });
+  if(repEndEl) repEndEl.addEventListener('change', e => { _repCustomEnd = e.target.value; pageRepayments(); });
 }
 
 function repRowActions(ev, id){
@@ -5542,13 +5644,15 @@ function downloadCollectionSheet(targetDate, officerFilter){
   targetDate = targetDate || todayISO();
   const isAdmin = state.staff.role === 'admin';
 
-  // Determine day of week from target date (e.g. "Monday")
+  // Use local date parsing to avoid timezone-off-by-one issues with new Date(dateStr)
+  const [yr, mo, dy] = targetDate.split('-').map(Number);
+  const localDate = new Date(yr, mo - 1, dy); // local midnight
   const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const dow = dayNames[new Date(targetDate + 'T12:00:00').getDay()];
+  const dow = dayNames[localDate.getDay()];
 
-  // Filter groups by meeting_day matching the target day, and by officer if set
+  // Filter groups by meeting_day matching the target day (case-insensitive), and by officer if set
   const matchedGroups = state.data.groups.filter(g => {
-    const dayMatch = (g.meeting_day || '').toLowerCase() === dow.toLowerCase();
+    const dayMatch = (g.meeting_day || '').trim().toLowerCase() === dow.toLowerCase();
     if(!dayMatch) return false;
     if(officerFilter) return g.officer_id === officerFilter;
     if(!isAdmin) return g.officer_id === state.staff.id;
@@ -5582,6 +5686,16 @@ function downloadCollectionSheet(targetDate, officerFilter){
     const paidInstallments = weekly > 0 ? Math.floor(paid / weekly) : 0;
     const totalInstallments = weekly > 0 ? Math.ceil(totalPayable / weekly) : 0;
     const unpaidInstallments = Math.max(0, totalInstallments - paidInstallments);
+
+    // Calculate today's expected collection (arrears + today's installment)
+    const msPerWeek = 7 * 24 * 3600 * 1000;
+    const startDate = new Date(l.start_date);
+    const weeksElapsed = Math.max(0, Math.floor((localDate - startDate) / msPerWeek));
+    const expectedPaid = Math.min(weeksElapsed * weekly, totalPayable);
+    const arrears = Math.max(0, expectedPaid - paid);
+    // Today's collection = weekly installment + any arrears outstanding
+    const todayExpected = Math.min(weekly + arrears, outstanding);
+
     return {
       'Client ID': m?.national_id || '—',
       'Client Name': m?.full_name || '—',
@@ -5590,9 +5704,12 @@ function downloadCollectionSheet(targetDate, officerFilter){
       'Loan Product (Asset)': l.asset_name,
       'Outstanding Balance': Number(outstanding.toFixed(2)),
       'Installment Amount': weekly,
+      'Arrears': Number(arrears.toFixed(2)),
+      'Expected Today': Number(todayExpected.toFixed(2)),
       'Paid Installments': paidInstallments,
       'Unpaid Installments': unpaidInstallments,
-      'Expected End Date': l.expected_end_date || '—'
+      'Expected End Date': l.expected_end_date || '—',
+      'Amount Collected': ''  // blank column for manual fill-in during collection
     };
   });
 
