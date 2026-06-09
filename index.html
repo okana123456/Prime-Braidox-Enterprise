@@ -3730,21 +3730,44 @@ function ordUpdateSummary(){
 function filterOrderMembers(){
   const q = ($('ord-mem-search').value||'').toLowerCase();
   const list = $('ord-mem-list'); if(!list) return;
-  const isAdmin = state.staff.role === 'admin';
+
+  // Show ALL non-inactive members matching the query — regardless of group or officer.
+  // Officers may need to award loans to members from any group; the dropdown shows
+  // enough detail (group, national ID, officer) to distinguish members with similar names.
   const matches = state.data.members.filter(m => {
-    // Allow active members AND members with no explicit status (legacy records)
     if(m.status && m.status !== 'active') return false;
-    if(!isAdmin){
-      // Officers only see members whose group is assigned to them
-      const grp = state.data.groups.find(g => g.id === m.group_id);
-      if(!grp || grp.officer_id !== state.staff.id) return false;
-    }
-    return m.full_name.toLowerCase().includes(q) || (m.national_id||'').includes(q);
-  }).slice(0,10);
-  list.style.display = matches.length ? 'block' : 'none';
-  list.innerHTML = matches.map(m=>{
-    const g = state.data.groups.find(x=>x.id===m.group_id);
-    return `<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="selectOrderMember('${m.id}','${m.full_name.replace(/'/g,"\\'")}','${g?.name||''}')">${m.full_name}<span class="muted" style="font-size:11px;margin-left:8px">${g?.name||''}</span></div>`;
+    if(!q) return true; // on focus with empty query, show all (capped below)
+    return m.full_name.toLowerCase().includes(q)
+      || (m.national_id||'').toLowerCase().includes(q)
+      || (m.phone||'').includes(q);
+  }).slice(0, 15); // allow up to 15 results so similar names all surface
+
+  list.style.display = matches.length ? 'block' : (q ? 'block' : 'none');
+  if(!matches.length){
+    list.innerHTML = `<div style="padding:9px 12px;font-size:12px;color:var(--text-muted)">No members found matching "${q}"</div>`;
+    list.style.display = 'block';
+    return;
+  }
+
+  list.innerHTML = matches.map(m => {
+    const g   = state.data.groups.find(x => x.id === m.group_id);
+    const off = state.data.staff.find(x => x.id === (g?.officer_id));
+    // Highlight if this member belongs to a different officer's group
+    const isOwnGroup = !state.staff || state.staff.role === 'admin' || g?.officer_id === state.staff.id;
+    const groupLabel  = g?.name || '—';
+    const offLabel    = off?.full_name || '—';
+    const idLabel     = m.national_id ? `ID: ${m.national_id}` : '';
+    return `<div
+      style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;${!isOwnGroup?'background:var(--surface-2)':''}"
+      onmousedown="selectOrderMember('${m.id}','${m.full_name.replace(/'/g,"\\'")}','${groupLabel.replace(/'/g,"\\'")}')">
+      <div style="font-weight:600">${m.full_name}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
+        <span>📋 ${groupLabel}</span>
+        ${idLabel ? `<span>🪪 ${idLabel}</span>` : ''}
+        <span>👤 ${offLabel}</span>
+        ${!isOwnGroup ? `<span style="color:var(--warning);font-weight:600">⚠ Different officer</span>` : ''}
+      </div>
+    </div>`;
   }).join('');
 }
 function selectOrderMember(id, name, groupName){
