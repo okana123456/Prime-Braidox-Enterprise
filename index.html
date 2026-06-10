@@ -1844,39 +1844,52 @@ function pageMembers(){
 }
 function memberActions(ev, id){
   const m = state.data.members.find(x=>x.id===id);
+  if(!m) return;
   const isAdmin = state.staff.role==='admin';
-  // Detect duplicates: same national_id or same full_name+phone as another member
-  const isDuplicate = state.data.members.some(x =>
+
+  // Check if any other member shares the same national_id or full_name+phone
+  const duplicates = state.data.members.filter(x =>
     x.id !== id && (
-      (x.national_id && x.national_id === m.national_id) ||
-      (x.full_name && x.phone && x.full_name === m.full_name && x.phone === m.phone)
+      (m.national_id && x.national_id && x.national_id === m.national_id) ||
+      (m.full_name && m.phone && x.full_name === m.full_name && x.phone === m.phone)
     )
   );
+  const isDuplicate = duplicates.length > 0;
+  const dupNote = isDuplicate
+    ? `⚠️ This record shares ${duplicates[0].national_id === m.national_id ? 'a National ID' : 'the same name and phone'} with <b>${duplicates[0].full_name}</b> (ID: ${duplicates[0].national_id||'—'}).`
+    : 'No automatic duplicate detected — proceed only if you are certain this is an erroneous entry.';
+
   showActMenu(ev, [
     { label:'View profile', onClick: ()=>{ go('memberProfile', { memberId: id }); } },
     { label:'Edit details', onClick: ()=>openMemberEdit(m) },
     'sep',
     ...(isAdmin ? [
-      { label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(`Deactivate "${m.full_name}"? They will no longer appear in active member lists.`, async()=>{
-        const { error } = await sb.from('pb_members').update({ status:'inactive' }).eq('id',id);
-        if(error) return toast(error.message,'error');
-        m.status='inactive'; audit('deactivate','pb_members',id); render(); toast('Member deactivated','success');
-      }, { title:'Deactivate member', danger:true }) },
-      ...(isDuplicate ? [{
-        label: '🗑 Delete Duplicate', danger: true, onClick: () => confirmDialog(
-          `Permanently delete "${m.full_name}"? This is flagged as a potential duplicate entry. All associated data (loans, savings, repayments) linked to this record will remain but the member record will be removed.`,
+      { label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(
+        `Deactivate "${m.full_name}"? They will no longer appear in active member lists.`,
+        async()=>{
+          const { error } = await sb.from('pb_members').update({ status:'inactive' }).eq('id',id);
+          if(error) return toast(error.message,'error');
+          m.status='inactive'; audit('deactivate','pb_members',id); render(); toast('Member deactivated','success');
+        }, { title:'Deactivate member', danger:true })
+      },
+      {
+        label: isDuplicate ? '🗑 Delete Duplicate Member' : '🗑 Delete Member',
+        danger: true,
+        onClick: () => confirmDialog(
+          `<b>Permanently delete "${m.full_name}"?</b><br><br>${dupNote}<br><br>` +
+          `This will <b>permanently remove</b> the member record. Any loans, savings, or repayments linked to this record will be orphaned. This action cannot be undone.`,
           async () => {
             if(!(await ensureFreshToken())) return;
             const { error } = await sb.from('pb_members').delete().eq('id', id);
             if(error) return toast('Delete failed: ' + error.message, 'error');
             state.data.members = state.data.members.filter(x => x.id !== id);
-            audit('delete_duplicate_member', 'pb_members', id, { full_name: m.full_name, national_id: m.national_id }, null);
+            audit('delete_member', 'pb_members', id, { full_name: m.full_name, national_id: m.national_id, was_duplicate: isDuplicate }, null);
             render();
-            toast(`Duplicate member "${m.full_name}" deleted.`, 'warn');
+            toast(`Member "${m.full_name}" permanently deleted.`, 'warn');
           },
-          { title: 'Delete Duplicate Member', danger: true }
+          { title: isDuplicate ? 'Delete Duplicate Member' : 'Delete Member', danger: true }
         )
-      }] : [])
+      }
     ] : [])
   ]);
 }
@@ -3728,44 +3741,52 @@ function ordUpdateSummary(){
   _updateOrderTotalSummary();
 }
 function filterOrderMembers(){
-  const q = ($('ord-mem-search').value||'').toLowerCase();
+  const q = ($('ord-mem-search').value||'').toLowerCase().trim();
   const list = $('ord-mem-list'); if(!list) return;
+  const isAdmin = state.staff.role === 'admin';
 
-  // Show ALL non-inactive members matching the query — regardless of group or officer.
-  // Officers may need to award loans to members from any group; the dropdown shows
-  // enough detail (group, national ID, officer) to distinguish members with similar names.
+  // Determine which groups this user can see
+  const allowedGroupIds = isAdmin
+    ? null // null = all groups
+    : new Set(state.data.groups.filter(g => g.officer_id === state.staff.id).map(g => g.id));
+
   const matches = state.data.members.filter(m => {
+    // Exclude explicitly inactive members
     if(m.status && m.status !== 'active') return false;
-    if(!q) return true; // on focus with empty query, show all (capped below)
+    // Officers only see members from their own assigned groups
+    if(allowedGroupIds !== null && !allowedGroupIds.has(m.group_id)) return false;
+    // Must match the search query (name, national ID, or phone)
+    if(!q) return true;
     return m.full_name.toLowerCase().includes(q)
       || (m.national_id||'').toLowerCase().includes(q)
       || (m.phone||'').includes(q);
-  }).slice(0, 15); // allow up to 15 results so similar names all surface
+  }).slice(0, 15);
 
-  list.style.display = matches.length ? 'block' : (q ? 'block' : 'none');
+  if(!q && !matches.length){
+    list.style.display = 'none';
+    return;
+  }
+
+  list.style.display = 'block';
+
   if(!matches.length){
-    list.innerHTML = `<div style="padding:9px 12px;font-size:12px;color:var(--text-muted)">No members found matching "${q}"</div>`;
-    list.style.display = 'block';
+    list.innerHTML = `<div style="padding:10px 12px;font-size:12px;color:var(--text-muted)">No members found matching "<b>${q}</b>" in your groups.</div>`;
     return;
   }
 
   list.innerHTML = matches.map(m => {
     const g   = state.data.groups.find(x => x.id === m.group_id);
-    const off = state.data.staff.find(x => x.id === (g?.officer_id));
-    // Highlight if this member belongs to a different officer's group
-    const isOwnGroup = !state.staff || state.staff.role === 'admin' || g?.officer_id === state.staff.id;
-    const groupLabel  = g?.name || '—';
-    const offLabel    = off?.full_name || '—';
-    const idLabel     = m.national_id ? `ID: ${m.national_id}` : '';
+    const groupLabel = g?.name || '—';
+    const idLabel    = m.national_id || '—';
+    const phone      = m.phone || '';
     return `<div
-      style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;${!isOwnGroup?'background:var(--surface-2)':''}"
+      style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)"
       onmousedown="selectOrderMember('${m.id}','${m.full_name.replace(/'/g,"\\'")}','${groupLabel.replace(/'/g,"\\'")}')">
-      <div style="font-weight:600">${m.full_name}</div>
+      <div style="font-size:13px;font-weight:600">${m.full_name}</div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
         <span>📋 ${groupLabel}</span>
-        ${idLabel ? `<span>🪪 ${idLabel}</span>` : ''}
-        <span>👤 ${offLabel}</span>
-        ${!isOwnGroup ? `<span style="color:var(--warning);font-weight:600">⚠ Different officer</span>` : ''}
+        <span>🪪 ${idLabel}</span>
+        ${phone ? `<span>📞 ${phone}</span>` : ''}
       </div>
     </div>`;
   }).join('');
