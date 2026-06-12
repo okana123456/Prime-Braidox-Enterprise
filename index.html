@@ -460,7 +460,8 @@ const state = {
   data: {
     groups: [], members: [], guarantors: [], staff: [], inventory: [],
     loans: [], orders: [], savings: [], repayments: [], meetings: [],
-    suppliers: [], purchases: [], purchaseLines: [], reconciliations: [], expenses: [], audit: []
+    suppliers: [], purchases: [], purchaseLines: [], reconciliations: [], expenses: [], audit: [],
+    mpesaTransactions: []
   },
   loading: true
 };
@@ -469,6 +470,24 @@ const state = {
 const KES = n => 'KES ' + (Number(n||0)).toLocaleString('en-KE', { minimumFractionDigits:0, maximumFractionDigits:2 });
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-KE', { day:'2-digit', month:'short', year:'numeric' }) : '—';
 const todayISO = () => new Date().toISOString().slice(0,10);
+
+/* ----- M-Pesa group code generator -----
+ * Generates a short, unique alphanumeric code (e.g. "GRP-7F3K") used as the
+ * M-Pesa Paybill ACCOUNT NUMBER for a group. The chairman/treasurer sends the
+ * day's total collection to the business Paybill using this code as the
+ * account reference, so incoming payments can be matched back to the group. */
+function generateGroupCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
+  let code;
+  let attempts = 0;
+  do {
+    let rand = '';
+    for(let i=0;i<4;i++) rand += chars[Math.floor(Math.random()*chars.length)];
+    code = 'GRP-' + rand;
+    attempts++;
+  } while(state.data.groups.some(g=>g.group_code===code) && attempts < 50);
+  return code;
+}
 const initials = name => (name||'').split(/\s+/).filter(Boolean).slice(0,2).map(s=>s[0]).join('').toUpperCase() || '—';
 const normalisePhone = p => {
   if(!p) return '';
@@ -651,8 +670,8 @@ async function smartLoadAll(){
     }
   }
   state.loading = true; render();
-  const tables = ['pb_groups','pb_members','pb_guarantors','pb_staff','pb_inventory','pb_loans','pb_orders','pb_savings','pb_repayments','pb_meetings','pb_suppliers','pb_purchases','pb_purchase_lines','pb_reconciliations','pb_expenses'];
-  const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_staff:'staff', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations', pb_expenses:'expenses' };
+  const tables = ['pb_groups','pb_members','pb_guarantors','pb_staff','pb_inventory','pb_loans','pb_orders','pb_savings','pb_repayments','pb_meetings','pb_suppliers','pb_purchases','pb_purchase_lines','pb_reconciliations','pb_expenses','pb_mpesa_transactions'];
+  const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_staff:'staff', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations', pb_expenses:'expenses', pb_mpesa_transactions:'mpesaTransactions' };
   const results = await Promise.all(tables.map(t => {
     let query = sb.from(t).select('*').limit(5000);
     if (state.staff && state.staff.business_id) {
@@ -698,14 +717,14 @@ function setupRealtime(){
         return;
       }
       const tbl = payload.table;
-      const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_staff:'staff', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations', pb_expenses:'expenses' };
+      const map = { pb_groups:'groups', pb_members:'members', pb_guarantors:'guarantors', pb_inventory:'inventory', pb_loans:'loans', pb_orders:'orders', pb_savings:'savings', pb_repayments:'repayments', pb_meetings:'meetings', pb_suppliers:'suppliers', pb_staff:'staff', pb_purchases:'purchases', pb_purchase_lines:'purchaseLines', pb_reconciliations:'reconciliations', pb_expenses:'expenses', pb_mpesa_transactions:'mpesaTransactions' };
       const key = map[tbl]; if(!key) return;
       const arr = state.data[key];
       if(payload.eventType === 'INSERT'){ if(!arr.find(x=>x.id===payload.new.id)) arr.unshift(payload.new); }
       else if(payload.eventType === 'UPDATE'){ const i = arr.findIndex(x=>x.id===payload.new.id); if(i>=0) arr[i] = payload.new; }
       else if(payload.eventType === 'DELETE'){ const i = arr.findIndex(x=>x.id===payload.old.id); if(i>=0) arr.splice(i,1); }
       lsSet(key, arr);
-      if(['dashboard','members','groups','meeting','loans','inventory'].includes(state.view)) render();
+      if(['dashboard','members','groups','meeting','loans','inventory','mpesaPayments'].includes(state.view)) render();
     })
     .subscribe();
 }
@@ -1066,6 +1085,7 @@ function navItems(){
     { k:'purchases', label:'Purchases', show:isAdmin || p.can_manage_suppliers, icon:purchaseIcon() },
     { k:'orders', label:'Orders', show:isAdmin || p.can_submit_orders || p.can_approve_orders, icon:orderIcon() },
     { k:'reconciliation', label:'Remittances', show:true, icon:recIcon() },
+    { k:'mpesaPayments', label:'M-Pesa Payments', show:true, icon: ic('<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><circle cx="17" cy="15" r="1.5"/>') },
     { k:'expenses', label:'Expenses', show:isAdmin || p.can_view_reports, icon:expensesIcon() },
     { k:'accounting', label:'Accounting', show:isAdmin, icon:accountingIcon() },
     { k:'reports', label:'Reports', show:isAdmin || p.can_view_reports, icon:reportIcon() },
@@ -1158,7 +1178,7 @@ function renderPage(){
     meeting: pageMeeting, savings: pageSavings, repayments: pageRepayments,
     loans: pageLoans, arrears: pageArrears, calculator: pageCalculator,
     inventory: pageInventory, suppliers: pageSuppliers, purchases: pagePurchases,
-    orders: pageOrders, reconciliation: pageReconciliation, expenses: pageExpenses, reports: pageReports, accounting: pageAccounting,
+    orders: pageOrders, reconciliation: pageReconciliation, mpesaPayments: pageMpesaPayments, expenses: pageExpenses, reports: pageReports, accounting: pageAccounting,
     staff: pageStaff, settings: pageSettings, audit: pageAudit,
     memberProfile: pageMemberProfile
   };
@@ -1650,6 +1670,7 @@ function pageGroups(){
         <div class="desc">${isAdmin ? 'All chama groups.' : 'Groups assigned to you.'}</div>
       </div>
       <div class="actions">
+        ${isAdmin && groups.some(g=>!g.group_code) ? `<button class="btn btn-outline" onclick="backfillGroupCodes()">🔄 Generate missing M-Pesa codes</button>` : ''}
         <button class="btn btn-primary" onclick="openGroupForm()">Register group</button>
       </div>
     </div>
@@ -1662,7 +1683,7 @@ function pageGroups(){
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>#</th><th>Name</th><th>Meeting day</th><th>Chairman</th>
+          <th>#</th><th>Name</th><th>M-Pesa Code</th><th>Meeting day</th><th>Chairman</th>
           <th>Treasurer</th><th>Officer</th><th class="num">Members</th><th class="num">Savings</th>
           <th>Status</th><th></th>
         </tr></thead>
@@ -1673,6 +1694,7 @@ function pageGroups(){
             return `<tr>
               <td>${g.group_number}</td>
               <td><b>${g.name}</b></td>
+              <td>${g.group_code ? `<code style="font-family:monospace;font-size:12px;background:var(--surface-2);padding:2px 6px;border-radius:4px">${g.group_code}</code>` : `<span class="muted" style="font-size:11px">— not set —</span>`}</td>
               <td>${g.meeting_day||'—'} ${g.meeting_time?'· '+g.meeting_time:''}</td>
               <td>${g.chairman_name||'—'}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
               <td>${g.treasurer_name||'—'}<div class="muted" style="font-size:11px">${g.treasurer_phone||''}</div></td>
@@ -1682,7 +1704,7 @@ function pageGroups(){
               <td><span class="badge ${g.status==='active'?'b-green':'b-grey'}">${g.status}</span></td>
               <td><button class="act-btn" onclick="groupActions(event,'${g.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="9"><div class="empty"><h4>No groups found</h4><p>${q ? 'No groups match your search.' : 'Create your first chama group to start onboarding members.'}</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No groups found</h4><p>${q ? 'No groups match your search.' : 'Create your first chama group to start onboarding members.'}</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -1711,11 +1733,37 @@ function groupActions(ev, id){
     }, { title:'Delete group', danger:true }) }
   ]);
 }
+async function backfillGroupCodes(){
+  const missing = state.data.groups.filter(g=>!g.group_code);
+  if(!missing.length) return toast('All groups already have an M-Pesa code.','success');
+  if(!(await ensureFreshToken())) return;
+  let okCount = 0;
+  for(const g of missing){
+    const code = generateGroupCode();
+    const { error } = await sb.from('pb_groups').update({ group_code: code }).eq('id', g.id);
+    if(!error){ g.group_code = code; okCount++; }
+  }
+  audit('backfill_group_codes','pb_groups',null,null,{ count: okCount });
+  render();
+  toast(`Generated M-Pesa codes for ${okCount} group(s).`,'success');
+}
 function openGroupForm(g=null){
   const officers = state.data.staff.filter(s=>s.role==='officer' && s.status==='active');
   modal({
     title: g ? 'Edit group' : 'Register new group',
     body: `<form id="gform">
+      ${g?.group_code ? `
+      <div style="background:var(--success-50,#f0fdf4);border:1px solid var(--success);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;font-size:13px">
+        💳 <b>M-Pesa Paybill Account Number:</b> <code style="font-family:monospace;font-weight:700;font-size:14px;background:var(--surface);padding:2px 8px;border-radius:4px;margin-left:4px">${g.group_code}</code>
+        <div class="muted" style="font-size:11px;margin-top:4px">
+          Give this code <b>only to the chairman/treasurer</b> to use when sending the day's collected
+          total to the Paybill after the meeting. <b>Do not</b> share this code with individual members —
+          members should bring their savings/repayments to the meeting in person.
+        </div>
+      </div>` : `
+      <div style="background:var(--info-50);border:1px solid var(--info);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;font-size:13px">
+        💳 A unique M-Pesa Paybill account code will be generated automatically for this group once saved.
+      </div>`}
       <div class="grid-2">
         <div class="field"><label>Group number</label><input type="number" name="group_number" value="${g?.group_number ?? (state.data.groups.length+1)}" required min="1" /></div>
         <div class="field"><label>Group name</label><input name="name" value="${g?.name||''}" required placeholder="e.g. Group 1 — Kawangware" /></div>
@@ -1759,10 +1807,14 @@ function openGroupForm(g=null){
         row.group_number = parseInt(row.group_number);
         row.officer_id = row.officer_id || null;
         if(g){
+          // Preserve existing group_code; if somehow missing (legacy record), assign one now
+          if(!g.group_code) row.group_code = generateGroupCode();
           const { error } = await sb.from('pb_groups').update(row).eq('id', g.id);
           if(error) return toast(error.message,'error');
           Object.assign(g, row); audit('update','pb_groups',g.id,null,row);
         } else {
+          // Every new group automatically gets a unique M-Pesa account code
+          row.group_code = generateGroupCode();
           const { data, error } = await sb.from('pb_groups').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.groups.unshift(data); audit('create','pb_groups',data.id,null,data);
@@ -4210,6 +4262,12 @@ async function editPerms(id){
  * ===================================================================== */
 function pageSettings(){
   const s = state.settings || {};
+  // Extract Supabase project ref from SUPABASE_URL to build the callback URL
+  const projectRef = SUPABASE_URL.replace('https://','').split('.')[0];
+  const bizId = state.staff?.business_id || 'default';
+  const callbackUrl = `https://${projectRef}.supabase.co/functions/v1/mpesa-callback/${bizId}`;
+  const env = s.mpesa_environment || 'sandbox';
+
   $('page').innerHTML = `
     <div class="page-head"><div><h1>Settings</h1><div class="desc">Business-wide configuration. Changes apply immediately.</div></div></div>
     <div class="card card-pad" style="max-width:720px">
@@ -4234,6 +4292,50 @@ function pageSettings(){
         <button class="btn btn-primary" type="submit">Save settings</button>
       </form>
     </div>
+
+    <div class="card card-pad" style="max-width:720px;margin-top:20px">
+      <div class="card-head" style="padding:0 0 14px 0;border:none">
+        <h3 style="margin:0">📲 M-Pesa Daraja API Integration</h3>
+        <div class="sub" style="margin-top:4px">
+          Connect Safaricom's Daraja API so M-Pesa payments to your Paybill (group remittances and
+          individual late payments) are automatically captured by the system.
+        </div>
+      </div>
+      <form id="mpf">
+        <div class="field">
+          <label>Environment</label>
+          <select name="mpesa_environment">
+            <option value="sandbox" ${env==='sandbox'?'selected':''}>Sandbox (testing)</option>
+            <option value="production" ${env==='production'?'selected':''}>Production (live)</option>
+          </select>
+          <div class="helper">Use Sandbox while testing with Safaricom's test credentials. Switch to Production only once everything works and Safaricom has approved your go-live request.</div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field"><label>Daraja Consumer Key</label><input name="mpesa_consumer_key" value="${s.mpesa_consumer_key||''}" autocomplete="off" placeholder="From Daraja portal app" /></div>
+          <div class="field"><label>Daraja Consumer Secret</label><input type="password" name="mpesa_consumer_secret" value="${s.mpesa_consumer_secret||''}" autocomplete="off" placeholder="From Daraja portal app" /></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>Paybill Shortcode</label><input name="mpesa_shortcode" value="${s.mpesa_shortcode||s.paybill_number||''}" placeholder="e.g. 600000" /></div>
+          <div class="field"><label>Lipa Na M-Pesa Passkey</label><input type="password" name="mpesa_passkey" value="${s.mpesa_passkey||''}" autocomplete="off" placeholder="Used for STK Push (optional)" /></div>
+        </div>
+
+        <div class="field">
+          <label>Callback URL <span class="muted" style="font-weight:400">(auto-generated — give this to Safaricom)</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="mpesa-callback-url" value="${callbackUrl}" readonly style="font-family:monospace;font-size:12px;background:var(--surface-2)" />
+            <button type="button" class="btn btn-outline btn-sm" onclick="copyCallbackUrl()">Copy</button>
+          </div>
+          <div class="helper">
+            This unique URL is generated automatically for your business. Register it as both the
+            <b>Validation URL</b> and <b>Confirmation URL</b> on the Daraja portal (or run the
+            <code class="kbd">mpesa-register-urls</code> edge function once it's deployed — see setup guide).
+          </div>
+        </div>
+
+        <button class="btn btn-primary" type="submit">Save M-Pesa settings</button>
+      </form>
+    </div>
   `;
   $('stf').addEventListener('submit', async e => {
     e.preventDefault();
@@ -4248,6 +4350,32 @@ function pageSettings(){
     lsSet('settings', state.settings);
     audit('update_settings','pb_settings', settingsId, null, row);
     toast('Settings saved','success');
+  });
+
+  $('mpf').addEventListener('submit', async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target); const row = Object.fromEntries(fd);
+    // Always (re)save the auto-generated callback URL too, so the edge function
+    // and the dashboard always show the same value
+    row.mpesa_callback_url = callbackUrl;
+    const settingsId = state.staff?.business_id ? ('biz_' + state.staff.business_id) : 'main';
+    const { error } = await sb.from('pb_settings').upsert({ id: settingsId, ...row });
+    if(error) return toast(error.message,'error');
+    state.settings = { ...state.settings, ...row, id: settingsId };
+    lsSet('settings', state.settings);
+    audit('update_mpesa_settings','pb_settings', settingsId, null, { mpesa_environment: row.mpesa_environment, mpesa_shortcode: row.mpesa_shortcode });
+    toast('M-Pesa settings saved','success');
+  });
+}
+function copyCallbackUrl(){
+  const el = $('mpesa-callback-url');
+  if(!el) return;
+  el.select();
+  navigator.clipboard?.writeText(el.value).then(()=>{
+    toast('Callback URL copied to clipboard','success');
+  }).catch(()=>{
+    document.execCommand('copy');
+    toast('Callback URL copied','success');
   });
 }
 
@@ -4971,6 +5099,316 @@ function reconActions(ev, id){
       audit('delete','pb_reconciliations',id); render(); toast('Deleted','warn');
     },{ title:'Delete remittance', danger:true }) }
   ]);
+}
+
+/* =====================================================================
+ * PAGE: M-PESA PAYMENTS
+ * Shows raw transactions received from Safaricom Daraja (via the
+ * mpesa-callback edge function) into pb_mpesa_transactions.
+ *
+ * Each row is one of:
+ *   - group_remittance   : paid using a group's M-Pesa code, from the
+ *                           chairman/treasurer's registered phone — the
+ *                           bulk "end of meeting" collection.
+ *   - individual_payment : paid using a group's M-Pesa code, but from a
+ *                           MEMBER's registered phone — i.e. someone who
+ *                           missed paying at the meeting and paid later
+ *                           from home, on their own phone.
+ *   - unmatched          : account number / phone didn't match anything
+ *                           in the system — needs manual review.
+ * ===================================================================== */
+function pageMpesaPayments(){
+  const isAdmin = state.staff.role === 'admin';
+  const myGroupIds = isAdmin ? null : new Set(state.data.groups.filter(g=>g.officer_id===state.staff.id).map(g=>g.id));
+
+  let txns = (state.data.mpesaTransactions || []).slice();
+  if(myGroupIds) txns = txns.filter(t => t.group_id && myGroupIds.has(t.group_id));
+  txns = txns.sort((a,b)=> new Date(b.transaction_time||b.created_at) - new Date(a.transaction_time||a.created_at));
+
+  const tab = state._mpesaTab || 'individual';
+  const groupRemit = txns.filter(t=>t.transaction_type==='group_remittance');
+  const individual = txns.filter(t=>t.transaction_type==='individual_payment');
+  const unmatched  = txns.filter(t=>!t.transaction_type || t.transaction_type==='unmatched');
+
+  const unallocCount = individual.filter(t=>t.status!=='allocated').length;
+
+  $('page').innerHTML = `
+    <div class="page-head">
+      <div><h1>M-Pesa Payments</h1><div class="desc">Live feed of payments received via Daraja on your Paybill.</div></div>
+    </div>
+
+    <div class="card card-pad" style="background:var(--info-50);border-color:var(--info);margin-bottom:16px;font-size:13px;line-height:1.8">
+      <b>How this works:</b><br>
+      • <b>Group Remittances</b> — the chairman/treasurer sends the day's total collection to the Paybill using the group's M-Pesa code as the account number. This is the <b>normal, expected</b> channel for all savings and repayments.<br>
+      • <b>Individual / Late Payments</b> — occasionally a member who genuinely could not attend the meeting may send their own contribution directly to the Paybill (same group code, from their own registered phone). The system detects this automatically and lists it here for the officer to allocate to Savings or a Loan Repayment.<br>
+      • <b>Unmatched</b> — payments where the account number or phone could not be matched to a group/member. An admin must match these manually.
+    </div>
+
+    <div class="card card-pad" style="background:var(--warning-50,#fffbeb);border-color:var(--warning);margin-bottom:16px;font-size:13px;line-height:1.8">
+      ⚠️ <b>Policy note:</b> Members should <b>continue attending weekly group meetings</b> and pay
+      through the chairman/treasurer as usual — this keeps attendance high and group cohesion strong.
+      Individual M-Pesa payments are an <b>exception for genuine emergencies only</b>, not a routine
+      alternative. Group codes should <b>not</b> be circulated to members directly.<br><br>
+      🔒 <b>No cash ever passes through the loan officer</b> — every shilling goes straight to the
+      Paybill from the chairman/treasurer or the member themselves. When an officer allocates an
+      individual payment below, the entry is recorded as <b>"pending"</b> just like any other
+      officer-recorded entry and requires <b>admin approval</b> on the Savings/Repayments page before
+      it counts toward the member's balance.
+    </div>
+
+    <div class="tabs" style="margin-bottom:14px">
+      <button class="${tab==='individual'?'active':''}" onclick="state._mpesaTab='individual';pageMpesaPayments()">
+        🟡 Individual / Late Payments ${unallocCount?`(${unallocCount} pending)`:''}
+      </button>
+      <button class="${tab==='group'?'active':''}" onclick="state._mpesaTab='group';pageMpesaPayments()">
+        💼 Group Remittances (${groupRemit.length})
+      </button>
+      ${isAdmin ? `<button class="${tab==='unmatched'?'active':''}" onclick="state._mpesaTab='unmatched';pageMpesaPayments()">
+        ⚠ Unmatched (${unmatched.length})
+      </button>` : ''}
+    </div>
+
+    ${tab==='individual' ? `
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date/Time</th><th>Member</th><th>Group</th><th>Phone</th>
+          <th class="num">Amount</th><th>M-Pesa Receipt</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${individual.length ? individual.map(t=>{
+            const mem = state.data.members.find(m=>m.id===t.member_id);
+            const g   = state.data.groups.find(x=>x.id===t.group_id);
+            return `<tr>
+              <td style="font-size:12px">${t.transaction_time ? new Date(t.transaction_time).toLocaleString('en-KE') : '—'}</td>
+              <td><b>${mem?.full_name||'—'}</b></td>
+              <td>${g?.name||'—'}</td>
+              <td style="font-size:12px">${t.msisdn||'—'}</td>
+              <td class="num"><b>${KES(t.amount)}</b></td>
+              <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'—'}</code></td>
+              <td>${t.status==='allocated'
+                ? `<span class="badge b-green">✓ Allocated${isAdmin?'':' (pending approval)'}</span>`
+                : `<span class="badge b-yellow">Pending</span>`}</td>
+              <td>${t.status==='allocated'
+                ? '—'
+                : `<button class="btn btn-sm btn-primary" onclick="openAllocateMpesaPayment('${t.id}')">Allocate</button>`}</td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="8"><div class="empty"><h4>No individual payments</h4><p>This list should normally be empty — members are expected to pay through the chairman/treasurer at the weekly meeting. Entries appear here only when a member sends a payment directly from their own phone.</p></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>` : ''}
+
+    ${tab==='group' ? `
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date/Time</th><th>Group</th><th>M-Pesa Code</th><th>Sender Phone</th>
+          <th class="num">Amount</th><th>M-Pesa Receipt</th><th>Linked Remittance</th>
+        </tr></thead>
+        <tbody>
+          ${groupRemit.length ? groupRemit.map(t=>{
+            const g = state.data.groups.find(x=>x.id===t.group_id);
+            const linked = state.data.reconciliations.find(r=>r.mpesa_reference===t.trans_id);
+            return `<tr>
+              <td style="font-size:12px">${t.transaction_time ? new Date(t.transaction_time).toLocaleString('en-KE') : '—'}</td>
+              <td><b>${g?.name||'—'}</b></td>
+              <td><code style="font-family:monospace;font-size:11px">${g?.group_code||t.account_reference||'—'}</code></td>
+              <td style="font-size:12px">${t.msisdn||'—'}</td>
+              <td class="num"><b>${KES(t.amount)}</b></td>
+              <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'—'}</code></td>
+              <td>${linked
+                ? `<span class="badge b-green">✓ ${KES(linked.grand_total)} on ${fmtDate(linked.meeting_date)}</span>`
+                : `<span class="badge b-grey">Not yet logged</span>`}</td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="7"><div class="empty"><h4>No group remittances yet</h4><p>When the chairman sends the day's total to the Paybill using the group's M-Pesa code, it will appear here.</p></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px">
+      💡 Tip: When logging a remittance under <b>Remittances → Log remittance</b>, paste the M-Pesa Receipt
+      number shown here into the "M-Pesa reference" field so it auto-links here for reconciliation.
+    </p>` : ''}
+
+    ${tab==='unmatched' && isAdmin ? `
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>Date/Time</th><th>Account Ref (typed)</th><th>Phone</th>
+          <th class="num">Amount</th><th>M-Pesa Receipt</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${unmatched.length ? unmatched.map(t=>`<tr>
+            <td style="font-size:12px">${t.transaction_time ? new Date(t.transaction_time).toLocaleString('en-KE') : '—'}</td>
+            <td><code style="font-family:monospace;font-size:12px">${t.account_reference||'—'}</code></td>
+            <td style="font-size:12px">${t.msisdn||'—'}</td>
+            <td class="num"><b>${KES(t.amount)}</b></td>
+            <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'—'}</code></td>
+            <td><button class="btn btn-sm btn-outline" onclick="openManualMatchMpesa('${t.id}')">Match manually</button></td>
+          </tr>`).join('') : `<tr><td colspan="6"><div class="empty"><h4>No unmatched payments</h4><p>Every incoming payment matched a group code or member phone number.</p></div></td></tr>`}
+        </tbody>
+      </table>
+    </div>` : ''}
+  `;
+}
+
+/* ----- Allocate an individual M-Pesa payment to Savings or Loan Repayment ----- */
+function openAllocateMpesaPayment(txnId){
+  const t = state.data.mpesaTransactions.find(x=>x.id===txnId);
+  if(!t) return toast('Transaction not found.','error');
+  const mem = state.data.members.find(m=>m.id===t.member_id);
+  const g   = state.data.groups.find(x=>x.id===t.group_id);
+  const myLoans = state.data.loans.filter(l=>l.member_id===t.member_id && l.status==='active');
+
+  const isAdmin = state.staff.role === 'admin';
+  modal({
+    title:`Allocate M-Pesa Payment — ${mem?.full_name||'Unknown'}`,
+    body:`
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px;font-size:13px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem?.full_name||'—'}</div></div>
+          <div><div class="muted" style="font-size:11px">Group</div><div style="font-weight:600">${g?.name||'—'}</div></div>
+          <div><div class="muted" style="font-size:11px">Amount paid</div><div style="font-weight:700;color:var(--success)">${KES(t.amount)}</div></div>
+          <div><div class="muted" style="font-size:11px">M-Pesa Receipt</div><div style="font-family:monospace;font-size:12px">${t.trans_id||'—'}</div></div>
+        </div>
+      </div>
+      ${!isAdmin ? `
+      <div style="background:var(--warning-50,#fffbeb);border:1px solid var(--warning);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:14px;font-size:12px">
+        ℹ️ This will be saved as <b>pending</b> and reviewed by an admin before it counts toward the member's balance — the same as any meeting entry you record.
+      </div>` : ''}
+      <div class="field">
+        <label>Allocate this payment as *</label>
+        <select id="mp-alloc-type" onchange="mpAllocTypeChanged()">
+          <option value="">— Select —</option>
+          <option value="savings">Savings deposit</option>
+          ${myLoans.length ? `<option value="repayment">Loan repayment</option>` : ''}
+        </select>
+      </div>
+      <div id="mp-loan-wrap" style="display:none" class="field">
+        <label>Select loan</label>
+        <select id="mp-loan-id">
+          ${myLoans.map(l=>`<option value="${l.id}">${l.asset_name} — outstanding ${KES(Math.max(0,Number(l.total_payable)-loanPaid(l.id)))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="mp-date" value="${t.transaction_time ? new Date(t.transaction_time).toISOString().slice(0,10) : todayISO()}" />
+      </div>
+    `,
+    actions:[
+      { label:'Cancel', onClick: closeModal },
+      { label:'Save Allocation', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const type = $('mp-alloc-type').value;
+        if(!type) return toast('Please select where to allocate this payment.','error');
+        const date = $('mp-date').value || todayISO();
+        const amount = Number(t.amount)||0;
+
+        if(type==='savings'){
+          const row = {
+            business_id: state.staff.business_id || null,
+            member_id: t.member_id, group_id: t.group_id,
+            meeting_date: date, amount,
+            recorded_by: state.staff.id,
+            notes: `M-Pesa ${t.trans_id||''} (individual payment)`,
+            status: state.staff.role==='admin' ? 'approved' : 'pending'
+          };
+          const { data, error } = await sb.from('pb_savings').insert(row).select().single();
+          if(error) return toast(error.message,'error');
+          state.data.savings.unshift(data);
+          audit('mpesa_allocate_savings','pb_savings',data.id,null,{ mpesa_txn: t.id });
+          await markMpesaTxnAllocated(t.id, 'pb_savings', data.id);
+          closeModal(); render(); toast('Payment allocated to Savings.','success');
+
+        } else if(type==='repayment'){
+          const loanId = $('mp-loan-id').value;
+          const ln = state.data.loans.find(l=>l.id===loanId);
+          if(!ln) return toast('Please select a loan.','error');
+          const outstanding = Math.max(0, Number(ln.total_payable)-loanPaid(ln.id));
+          const useAmount = Math.min(amount, outstanding);
+          const ir = Number(ln.total_payable) ? (Number(ln.total_payable)-Number(ln.loan_value))/Number(ln.total_payable) : 0;
+          const interest = +(useAmount*ir).toFixed(2);
+          const principal = +(useAmount-interest).toFixed(2);
+          const row = {
+            business_id: state.staff.business_id || null,
+            loan_id: ln.id, member_id: t.member_id, group_id: t.group_id,
+            meeting_date: date, amount: useAmount, principal, interest,
+            recorded_by: state.staff.id,
+            status: state.staff.role==='admin' ? 'approved' : 'pending'
+          };
+          const { data, error } = await sb.from('pb_repayments').insert(row).select().single();
+          if(error) return toast(error.message,'error');
+          state.data.repayments.unshift(data);
+          audit('mpesa_allocate_repayment','pb_repayments',data.id,null,{ mpesa_txn: t.id });
+          if(loanPaid(ln.id) >= Number(ln.total_payable)){
+            await sb.from('pb_loans').update({ status:'completed' }).eq('id', ln.id);
+            ln.status='completed';
+          }
+          await markMpesaTxnAllocated(t.id, 'pb_repayments', data.id);
+          closeModal(); render();
+          toast(useAmount < amount
+            ? `Payment allocated. Note: only ${KES(useAmount)} of ${KES(amount)} was applied (loan balance cleared) — remainder may need a separate savings entry.`
+            : 'Payment allocated to Loan Repayment.', 'success');
+        }
+      }}
+    ]
+  });
+}
+function mpAllocTypeChanged(){
+  const v = $('mp-alloc-type')?.value;
+  const wrap = $('mp-loan-wrap');
+  if(wrap) wrap.style.display = v==='repayment' ? 'block' : 'none';
+}
+async function markMpesaTxnAllocated(txnId, table, recordId){
+  const { error } = await sb.from('pb_mpesa_transactions').update({
+    status: 'allocated', allocated_table: table, allocated_id: recordId,
+    allocated_by: state.staff.id, allocated_at: new Date().toISOString()
+  }).eq('id', txnId);
+  const t = state.data.mpesaTransactions.find(x=>x.id===txnId);
+  if(t && !error){ t.status='allocated'; t.allocated_table=table; t.allocated_id=recordId; }
+}
+
+/* ----- Admin: manually match an unmatched M-Pesa transaction to a group/member ----- */
+function openManualMatchMpesa(txnId){
+  const t = state.data.mpesaTransactions.find(x=>x.id===txnId);
+  if(!t) return toast('Transaction not found.','error');
+  modal({
+    title:'Match payment manually',
+    body:`
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
+        Account ref typed: <code>${t.account_reference||'—'}</code> · Phone: ${t.msisdn||'—'} · Amount: <b>${KES(t.amount)}</b>
+      </div>
+      <div class="field"><label>Group *</label>
+        <select id="mm-group">
+          <option value="">— Select group —</option>
+          ${state.data.groups.map(g=>`<option value="${g.id}">${g.name} (${g.group_code||'no code'})</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Member (optional — leave blank if this is the chairman's bulk remittance)</label>
+        <select id="mm-member">
+          <option value="">— Bulk group remittance —</option>
+          ${state.data.members.map(m=>`<option value="${m.id}" data-group="${m.group_id}">${m.full_name}</option>`).join('')}
+        </select>
+      </div>
+    `,
+    actions:[
+      { label:'Cancel', onClick: closeModal },
+      { label:'Save match', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const groupId = $('mm-group').value;
+        const memberId = $('mm-member').value || null;
+        if(!groupId) return toast('Please select a group.','error');
+        const type = memberId ? 'individual_payment' : 'group_remittance';
+        const { error } = await sb.from('pb_mpesa_transactions').update({
+          group_id: groupId, member_id: memberId, transaction_type: type
+        }).eq('id', t.id);
+        if(error) return toast(error.message,'error');
+        t.group_id = groupId; t.member_id = memberId; t.transaction_type = type;
+        audit('mpesa_manual_match','pb_mpesa_transactions',t.id,null,{ groupId, memberId, type });
+        closeModal(); render();
+        toast('Payment matched. ' + (memberId ? 'It now appears under Individual Payments for allocation.' : 'It now appears under Group Remittances.'), 'success');
+      }}
+    ]
+  });
 }
 
 
