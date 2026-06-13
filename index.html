@@ -4265,7 +4265,7 @@ function pageSettings(){
   // Extract Supabase project ref from SUPABASE_URL to build the callback URL
   const projectRef = SUPABASE_URL.replace('https://','').split('.')[0];
   const bizId = state.staff?.business_id || 'default';
-  const callbackUrl = `https://${projectRef}.supabase.co/functions/v1/mpesa-callback/${bizId}`;
+  const callbackUrl = `https://${projectRef}.supabase.co/functions/v1/collections-callback/${bizId}`;
   const env = s.mpesa_environment || 'sandbox';
 
   $('page').innerHTML = `
@@ -4323,13 +4323,13 @@ function pageSettings(){
         <div class="field">
           <label>Callback URL <span class="muted" style="font-weight:400">(auto-generated — give this to Safaricom)</span></label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input id="mpesa-callback-url" value="${callbackUrl}" readonly style="font-family:monospace;font-size:12px;background:var(--surface-2)" />
+            <input id="collections-callback-url" value="${callbackUrl}" readonly style="font-family:monospace;font-size:12px;background:var(--surface-2)" />
             <button type="button" class="btn btn-outline btn-sm" onclick="copyCallbackUrl()">Copy</button>
           </div>
           <div class="helper">
             This unique URL is generated automatically for your business. Register it as both the
             <b>Validation URL</b> and <b>Confirmation URL</b> on the Daraja portal (or run the
-            <code class="kbd">mpesa-register-urls</code> edge function once it's deployed — see setup guide).
+            <code class="kbd">collections-register-urls</code> edge function once it's deployed — see setup guide).
           </div>
         </div>
 
@@ -4368,7 +4368,7 @@ function pageSettings(){
   });
 }
 function copyCallbackUrl(){
-  const el = $('mpesa-callback-url');
+  const el = $('collections-callback-url');
   if(!el) return;
   el.select();
   navigator.clipboard?.writeText(el.value).then(()=>{
@@ -5104,7 +5104,7 @@ function reconActions(ev, id){
 /* =====================================================================
  * PAGE: M-PESA PAYMENTS
  * Shows raw transactions received from Safaricom Daraja (via the
- * mpesa-callback edge function) into pb_mpesa_transactions.
+ * collections-callback edge function) into pb_mpesa_transactions.
  *
  * Each row is one of:
  *   - group_remittance   : paid using a group's M-Pesa code, from the
