@@ -5139,12 +5139,17 @@ function pageMpesaPayments(){
   // Groups for filter dropdown
   const visibleGroups = isAdmin ? state.data.groups : state.data.groups.filter(g=>myGroupIds.has(g.id));
 
-  // Format sender phone — Safaricom hashes MSISDNs on production (long hex string)
-  // so we show a friendly label instead of the raw hash
-  const formatSender = (msisdn) => {
-    if(!msisdn) return '—';
-    if(msisdn.length > 20) return `<span title="${msisdn}" style="font-size:11px;color:var(--text-muted)">Verified sender 🔒</span>`;
-    return `<span style="font-size:12px">${msisdn}</span>`;
+  // Format sender — Safaricom hashes MSISDNs on production (long hex string)
+  // but sends FirstName/MiddleName/LastName in plain text.
+  // We show the name when the phone is hashed, raw phone when it's plain.
+  const formatSender = (t) => {
+    const msisdn = t.msisdn || '';
+    const isHashed = msisdn.length > 20;
+    if(!isHashed && msisdn) return `<span style="font-size:12px">${msisdn}</span>`;
+    // Build name from stored fields
+    const name = [t.first_name, t.middle_name, t.last_name].filter(Boolean).join(' ').trim();
+    if(name) return `<span style="font-size:12px;font-weight:500">${name}</span><div style="font-size:10px;color:var(--text-muted)">Phone encrypted by Safaricom</div>`;
+    return `<span style="font-size:11px;color:var(--text-muted)">Unknown sender</span>`;
   };
 
   $('page').innerHTML = `
@@ -5209,7 +5214,7 @@ function pageMpesaPayments(){
               <td style="font-size:12px">${t.transaction_time?new Date(t.transaction_time).toLocaleString('en-KE'):'—'}</td>
               <td><b>${g?.name||'—'}</b></td>
               <td><code style="font-family:monospace;font-size:11px">${g?.group_code||t.account_reference||'—'}</code></td>
-              <td>${formatSender(t.msisdn)}</td>
+              <td>${formatSender(t)}</td>
               <td class="num"><b style="color:var(--success)">${KES(t.amount)}</b></td>
               <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'—'}</code></td>
               <td>${linked
@@ -5239,7 +5244,7 @@ function pageMpesaPayments(){
               <td style="font-size:12px">${t.transaction_time?new Date(t.transaction_time).toLocaleString('en-KE'):'—'}</td>
               <td><b>${mem?.full_name||'—'}</b></td>
               <td>${g?.name||'—'}</td>
-              <td>${formatSender(t.msisdn)}</td>
+              <td>${formatSender(t)}</td>
               <td class="num"><b>${KES(t.amount)}</b></td>
               <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'—'}</code></td>
               <td>${t.status==='allocated'
@@ -5264,7 +5269,7 @@ function pageMpesaPayments(){
           ${unmatched.length?unmatched.map(t=>`<tr>
             <td style="font-size:12px">${t.transaction_time?new Date(t.transaction_time).toLocaleString('en-KE'):'—'}</td>
             <td><code style="font-family:monospace;font-size:12px">${t.account_reference||'—'}</code></td>
-            <td>${formatSender(t.msisdn)}</td>
+            <td>${formatSender(t)}</td>
             <td class="num"><b>${KES(t.amount)}</b></td>
             <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'—'}</code></td>
             <td><button class="btn btn-sm btn-outline" onclick="openManualMatchMpesa('${t.id}')">Match manually</button></td>
