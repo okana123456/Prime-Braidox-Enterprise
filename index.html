@@ -2566,80 +2566,118 @@ function renderMeetList(){
   const members = state.data.members.filter(x=>x.group_id===m.groupId && (!x.status || x.status==='active'));
   if(!members.length){ host.innerHTML = `<div class="card card-pad empty"><h4>No active members</h4><p>Register members to this group before recording a meeting.</p></div>`; return; }
 
+  // Pre-compute each member's outstanding registration balance
+  const regFeeTotal = (mem) => Number(mem.registration_fee) || Number(state.settings?.registration_fee) || 600;
+  const regPaid = (memId) => state.data.savings
+    .filter(s => s.member_id === memId && s.type === 'registration' && s.status !== 'rejected')
+    .reduce((a,b) => a + Number(b.amount||0), 0);
+
+  // Pre-compute each member's inventory deposits paid
+  const depositPaid = (memId) => state.data.savings
+    .filter(s => s.member_id === memId && s.type === 'deposit' && s.status !== 'rejected')
+    .reduce((a,b) => a + Number(b.amount||0), 0);
+
   host.innerHTML = `
-    <div class="card-head" style="border-radius:var(--radius-lg) var(--radius-lg) 0 0;background:var(--surface);border:1px solid var(--border);border-bottom:none">
-      <h3>${members.length} members</h3>
-      <button class="btn btn-primary" onclick="submitMeeting()">Submit meeting</button>
-    </div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-top:none;padding:14px;border-radius:0 0 var(--radius-lg) var(--radius-lg)">
-      ${members.map(mem => {
-        const sv = memberSavings(mem.id);
-        const lns = state.data.loans.filter(l => l.member_id === mem.id && l.status === 'active');
-        const ent = m.entries[mem.id] = m.entries[mem.id] || { savings:'', repayments:{}, absent:false, notes:'' };
+    <div class="card">
+      <div class="card-head">
+        <h3>${members.length} members — ${m.date}</h3>
+        <button class="btn btn-primary" onclick="submitMeeting()">✓ Submit meeting</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="tbl" style="min-width:900px">
+          <thead>
+            <tr>
+              <th style="min-width:160px">Member</th>
+              <th class="num" style="min-width:120px">Savings (KES)</th>
+              <th class="num" style="min-width:130px">
+                Reg. Installment
+                <div style="font-weight:400;font-size:10px;color:var(--text-muted)">Towards KES 600 fee</div>
+              </th>
+              <th class="num" style="min-width:130px">
+                Asset Deposit
+                <div style="font-weight:400;font-size:10px;color:var(--text-muted)">Towards order deposit</div>
+              </th>
+              <th style="min-width:220px">Loan Repayment(s)</th>
+              <th style="min-width:80px;text-align:center">Absent</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${members.map(mem => {
+              const sv = memberSavings(mem.id);
+              const lns = state.data.loans.filter(l => l.member_id === mem.id && l.status === 'active');
+              const ent = m.entries[mem.id] = m.entries[mem.id] || { savings:'', reg_installment:'', deposit:'', repayments:{}, absent:false, notes:'' };
+              lns.forEach(ln => { if(ent.repayments[ln.id] === undefined) ent.repayments[ln.id] = Number(ln.weekly_installment)||0; });
 
-        lns.forEach(ln => {
-          if(ent.repayments[ln.id] === undefined) ent.repayments[ln.id] = Number(ln.weekly_installment);
-        });
+              const regTotal = regFeeTotal(mem);
+              const regPaidAmt = regPaid(mem.id);
+              const regBalance = Math.max(0, regTotal - regPaidAmt);
+              const depPaidAmt = depositPaid(mem.id);
 
-        return `<div class="mc">
-          <div class="top">
-            <div class="av">${initials(mem.full_name)}</div>
-            <div style="flex:1">
-              <div class="nm">${mem.full_name}</div>
-              <div class="meta">ID ${mem.national_id} · Total Savings ${KES(sv)} · ${lns.length} Active Loan(s)</div>
-            </div>
-          </div>
-          <div class="row">
-            <div>
-              <label>Savings this week (KES)</label>
-              <input type="number" min="0" data-id="${mem.id}" data-f="savings" value="${ent.savings}" ${ent.absent?'disabled':''} />
-            </div>
-            <div></div>
-          </div>
-          ${lns.map(ln => {
-            const out = Number(ln.total_payable) - loanPaid(ln.id);
-            return `<div class="row" style="margin-top:10px; border-top:1px dashed var(--border); padding-top:10px;">
-              <div>
-                <label>Repayment: <b>${ln.asset_name}</b> (KES)</label>
-                <input type="number" min="0" data-id="${mem.id}" data-loanid="${ln.id}" value="${ent.repayments[ln.id]}" ${ent.absent?'disabled':''} />
-              </div>
-              <div>
-                <div class="ro" style="margin-top:22px">Outstanding<b>${KES(out)}</b></div>
-              </div>
-            </div>`;
-          }).join('')}
-          <div class="absent-row">
-            <input type="checkbox" id="abs-${mem.id}" ${ent.absent?'checked':''} data-id="${mem.id}" data-f="absent" />
-            <label for="abs-${mem.id}" style="margin:0">Mark as absent (no contributions this week)</label>
-          </div>
-        </div>`;
-      }).join('')}
+              const dis = ent.absent ? 'disabled' : '';
+
+              return `<tr id="mrow-${mem.id}" ${ent.absent ? 'style="opacity:0.45"' : ''}>
+                <td>
+                  <div style="font-weight:600;font-size:13px">${mem.full_name}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">Savings: ${KES(sv)}${lns.length?` · ${lns.length} loan(s)`:''}</div>
+                </td>
+                <td>
+                  <input type="number" min="0" class="meet-input" data-id="${mem.id}" data-f="savings"
+                    value="${ent.savings}" ${dis} style="width:100%;text-align:right" placeholder="0" />
+                </td>
+                <td>
+                  ${regBalance > 0 ? `
+                  <input type="number" min="0" max="${regBalance}" class="meet-input" data-id="${mem.id}" data-f="reg_installment"
+                    value="${ent.reg_installment}" ${dis} style="width:100%;text-align:right" placeholder="0" />
+                  <div style="font-size:10px;color:var(--warning);margin-top:2px">Balance: ${KES(regBalance)}</div>
+                  ` : `<div style="font-size:11px;color:var(--success);text-align:center">✓ Paid ${KES(regTotal)}</div>`}
+                </td>
+                <td>
+                  <input type="number" min="0" class="meet-input" data-id="${mem.id}" data-f="deposit"
+                    value="${ent.deposit}" ${dis} style="width:100%;text-align:right" placeholder="0" />
+                  ${depPaidAmt > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Deposited so far: ${KES(depPaidAmt)}</div>` : ''}
+                </td>
+                <td>
+                  ${lns.length ? lns.map(ln => {
+                    const out = Math.max(0, Number(ln.total_payable) - loanPaid(ln.id));
+                    return `<div style="margin-bottom:6px">
+                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">${ln.asset_name} · out: ${KES(out)}</div>
+                      <input type="number" min="0" class="meet-input" data-id="${mem.id}" data-loanid="${ln.id}"
+                        value="${ent.repayments[ln.id]||''}" ${dis} style="width:100%;text-align:right" placeholder="0" />
+                    </div>`;
+                  }).join('') : `<span style="font-size:11px;color:var(--text-muted)">No active loans</span>`}
+                </td>
+                <td style="text-align:center">
+                  <input type="checkbox" class="meet-input" data-id="${mem.id}" data-f="absent"
+                    ${ent.absent?'checked':''} style="width:18px;height:18px;cursor:pointer" />
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
 
-  host.querySelectorAll('input').forEach(el => {
-    el.addEventListener('change', () => {
+  host.querySelectorAll('.meet-input').forEach(el => {
+    const update = () => {
       const id = el.dataset.id, f = el.dataset.f, lid = el.dataset.loanid;
-      if (el.type === 'checkbox') {
+      if(el.type === 'checkbox'){
         m.entries[id][f] = el.checked;
-        if (f === 'absent' && el.checked) {
+        if(f === 'absent' && el.checked){
           m.entries[id].savings = 0;
+          m.entries[id].reg_installment = 0;
+          m.entries[id].deposit = 0;
           Object.keys(m.entries[id].repayments).forEach(k => m.entries[id].repayments[k] = 0);
           renderMeetList();
         }
-      } else if (lid) {
+      } else if(lid){
         m.entries[id].repayments[lid] = el.value;
       } else {
         m.entries[id][f] = el.value;
       }
-    });
-    el.addEventListener('input', () => {
-      const id = el.dataset.id, f = el.dataset.f, lid = el.dataset.loanid;
-      if (el.type !== 'checkbox') {
-        if (lid) m.entries[id].repayments[lid] = el.value;
-        else m.entries[id][f] = el.value;
-      }
-    });
+    };
+    el.addEventListener('change', update);
+    el.addEventListener('input', update);
   });
 }
 async function submitMeeting(){
@@ -2663,15 +2701,29 @@ async function submitMeeting(){
   for(const mem of members){
     const e = m.entries[mem.id] || {};
     if(e.absent){ continue; }
-    const sav = Number(e.savings)||0;
+    const savStatus = state.staff.role === 'admin' ? 'approved' : 'pending';
 
-    if(sav>0){
-      const savStatus = state.staff.role === 'admin' ? 'approved' : 'pending';
-      savRows.push({ business_id: state.staff.business_id || null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, recorded_by: state.staff.id, notes: e.notes||null, status: savStatus });
+    // 1. Regular savings
+    const sav = Number(e.savings)||0;
+    if(sav > 0){
+      savRows.push({ business_id: state.staff.business_id||null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: sav, type: 'savings', recorded_by: state.staff.id, notes: e.notes||null, status: savStatus });
     }
 
-    if (e.repayments) {
-      for (const [loanId, repAmount] of Object.entries(e.repayments)) {
+    // 2. Registration fee installment
+    const reg = Number(e.reg_installment)||0;
+    if(reg > 0){
+      savRows.push({ business_id: state.staff.business_id||null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: reg, type: 'registration', recorded_by: state.staff.id, notes: 'Registration fee installment', status: savStatus });
+    }
+
+    // 3. Asset deposit installment
+    const dep = Number(e.deposit)||0;
+    if(dep > 0){
+      savRows.push({ business_id: state.staff.business_id||null, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: dep, type: 'deposit', recorded_by: state.staff.id, notes: 'Asset deposit installment', status: savStatus });
+    }
+
+    // 4. Loan repayments
+    if(e.repayments){
+      for(const [loanId, repAmount] of Object.entries(e.repayments)){
         const rep = Number(repAmount)||0;
         const ln = state.data.loans.find(l => l.id === loanId);
         if(rep > 0 && ln){
@@ -2679,7 +2731,7 @@ async function submitMeeting(){
           const interest = +(rep*ir).toFixed(2);
           const principal = +(rep-interest).toFixed(2);
           const repStatus = state.staff.role === 'admin' ? 'approved' : 'pending';
-          repRows.push({ business_id: state.staff.business_id || null, loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id, status: repStatus });
+          repRows.push({ business_id: state.staff.business_id||null, loan_id: ln.id, member_id: mem.id, group_id: m.groupId, meeting_id: meetingId, meeting_date: m.date, amount: rep, principal, interest, recorded_by: state.staff.id, status: repStatus });
         }
       }
     }
@@ -2704,7 +2756,15 @@ async function submitMeeting(){
     }
   }
 
-  toast(`Meeting saved. Savings entries: ${okSav}. Repayments: ${okRep}.${fail?' Failed: '+fail:''}`, fail?'warn':'success');
+  const regCount = savRows.filter(r=>r.type==='registration').length;
+  const depCount = savRows.filter(r=>r.type==='deposit').length;
+  const savCount = savRows.filter(r=>r.type==='savings').length;
+  const parts = [];
+  if(savCount) parts.push(`${savCount} savings`);
+  if(regCount) parts.push(`${regCount} reg. installment(s)`);
+  if(depCount) parts.push(`${depCount} deposit(s)`);
+  if(okRep) parts.push(`${okRep} repayment(s)`);
+  toast(`Meeting saved — ${parts.join(', ')}.${fail?' Failed: '+fail:''}`, fail?'warn':'success');
   state._meet = { groupId:'', date: todayISO(), entries:{} };
   render();
 }
@@ -5182,9 +5242,18 @@ function pageMpesaPayments(){
         <input type="date" id="mpesa-date-end" value="${state._mpesaCustomEnd||today}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       `:''}
       <select style="font-size:13px;margin-left:8px" onchange="state._mpesaGroupFilter=this.value;pageMpesaPayments()">
-        <option value="">All Groups</option>
-        ${visibleGroups.map(g=>`<option value="${g.id}" ${gc===g.id?'selected':''}>${g.name}</option>`).join('')}
-      </select>
+          <option value="">All Groups</option>
+          ${visibleGroups.map(g=>`<option value="${g.id}" ${gc===g.id?'selected':''}>${g.name}</option>`).join('')}
+        </select>
+      </div>
+
+      <div style="position:relative;margin-left:8px;min-width:200px">
+        <input id="mpesa-grp-search" type="text" placeholder="Search group…"
+          value="${gc ? (visibleGroups.find(g=>g.id===gc)?.name||'') : ''}"
+          style="width:100%;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"
+          autocomplete="off" />
+        <div id="mpesa-grp-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:99;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)"></div>
+      </div>
     </div>
 
     <div class="tabs" style="margin-bottom:14px">
@@ -5284,6 +5353,27 @@ function pageMpesaPayments(){
   const deEl = document.getElementById('mpesa-date-end');
   if(dsEl) dsEl.addEventListener('change', e=>{ state._mpesaCustomStart=e.target.value; pageMpesaPayments(); });
   if(deEl) deEl.addEventListener('change', e=>{ state._mpesaCustomEnd=e.target.value; pageMpesaPayments(); });
+
+  // Live group search
+  const grpSearch = document.getElementById('mpesa-grp-search');
+  const grpDrop = document.getElementById('mpesa-grp-dropdown');
+  if(grpSearch && grpDrop){
+    const showDrop = (q) => {
+      const matches = visibleGroups.filter(g => !q || g.name.toLowerCase().includes(q.toLowerCase()));
+      grpDrop.innerHTML = [
+        `<div style="padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text-muted)"
+          onmousedown="state._mpesaGroupFilter='';pageMpesaPayments()">All Groups</div>`,
+        ...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
+          onmousedown="state._mpesaGroupFilter='${g.id}';pageMpesaPayments()">${g.name}
+          ${g.group_code?`<span style='font-size:10px;color:var(--text-muted);margin-left:6px'>${g.group_code}</span>`:''}
+        </div>`)
+      ].join('');
+      grpDrop.style.display = matches.length ? 'block' : 'none';
+    };
+    grpSearch.addEventListener('focus', () => showDrop(grpSearch.value));
+    grpSearch.addEventListener('input', () => showDrop(grpSearch.value));
+    grpSearch.addEventListener('blur', () => setTimeout(()=>{ grpDrop.style.display='none'; }, 200));
+  }
 }
 
 /* ----- Allocate an individual M-Pesa payment to Savings or Loan Repayment ----- */
