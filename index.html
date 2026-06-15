@@ -3016,6 +3016,29 @@ function pageLoans(){
     ['all','All Time'],['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','Last Month'],['3months','Last 3 Months'],['custom','Custom']
   ];
 
+  // ---- Group summary data (computed before rendering) ----
+  // For each group that has loans in the current filtered set, compute
+  // total savings, total outstanding, total loan value, and member count.
+  const groupsWithLoans = visibleGroups.filter(g =>
+    loans.some(l => l.group_id === g.id)
+  );
+
+  const groupSummary = groupsWithLoans.map(g => {
+    const gLoans = loans.filter(l => l.group_id === g.id);
+    const totalLoanValue = gLoans.reduce((a,l) => a + Number(l.loan_value||0), 0);
+    const totalOutstanding = gLoans.reduce((a,l) => a + Math.max(0, Number(l.total_payable||0) - loanPaid(l.id)), 0);
+    const totalPaid = gLoans.reduce((a,l) => a + loanPaid(l.id), 0);
+    const totalSavings = state.data.savings
+      .filter(s => s.group_id === g.id && s.status !== 'rejected' && (!s.type || s.type === 'savings'))
+      .reduce((a,s) => a + Number(s.amount||0), 0);
+    const memberCount = new Set(gLoans.map(l=>l.member_id)).size;
+    const off = state.data.staff.find(s => s.id === g.officer_id);
+    // Health ratio: savings / outstanding (>1 = saves more than owes, <1 = owes more than saves)
+    const ratio = totalOutstanding > 0 ? totalSavings / totalOutstanding : totalSavings > 0 ? 99 : 0;
+    const health = ratio >= 1 ? 'good' : ratio >= 0.5 ? 'warn' : 'poor';
+    return { g, gLoans, totalLoanValue, totalOutstanding, totalPaid, totalSavings, memberCount, off, ratio, health };
+  }).sort((a,b) => b.totalOutstanding - a.totalOutstanding);
+
   $('page').innerHTML = `
     <div class="page-head">
       <div><h1>Loan portfolio</h1><div class="desc">Asset-backed loans across all members.</div></div>
@@ -3025,7 +3048,6 @@ function pageLoans(){
         ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${tab==='active' ? `` : ''}
         <select style="max-width:200px;font-size:13px" onchange="state._loanGroupFilter=this.value; pageLoans()">
           <option value="">All Groups</option>
           ${visibleGroups.map(g=>`<option value="${g.id}" ${state._loanGroupFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
@@ -3047,6 +3069,98 @@ function pageLoans(){
         <input type="date" id="loan-custom-end" value="${_loanCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
       `:''}
     </div>
+
+    ${groupSummary.length > 1 && !state._loanGroupFilter ? `
+    <div style="margin-bottom:20px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">
+        Group Overview — ${groupSummary.length} groups · click a group to filter
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+        ${groupSummary.map(({g, totalLoanValue, totalOutstanding, totalPaid, totalSavings, memberCount, off, ratio, health}) => {
+          const barW = Math.min(100, totalOutstanding > 0 ? (totalSavings / (totalSavings + totalOutstanding)) * 100 : 100);
+          const healthColor = health==='good' ? 'var(--success)' : health==='warn' ? 'var(--warning)' : 'var(--danger)';
+          const healthLabel = health==='good' ? '✅ Healthy' : health==='warn' ? '⚠️ Watch' : '🔴 At Risk';
+          return `<div class="card card-pad" style="cursor:pointer;transition:box-shadow .15s"
+              onclick="state._loanGroupFilter='${g.id}';pageLoans()"
+              onmouseenter="this.style.boxShadow='0 4px 16px rgba(0,0,0,.12)'"
+              onmouseleave="this.style.boxShadow=''">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+              <div>
+                <div style="font-weight:700;font-size:14px">${g.name}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${memberCount} member(s) with loans${off?` · ${off.full_name}`:''}</div>
+              </div>
+              <span style="font-size:11px;font-weight:600;color:${healthColor};white-space:nowrap;margin-left:8px">${healthLabel}</span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px">
+              <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:8px 10px">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;text-transform:uppercase">Total Savings</div>
+                <div style="font-weight:700;font-size:14px;color:var(--success)">${KES(totalSavings)}</div>
+              </div>
+              <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:8px 10px">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;text-transform:uppercase">Outstanding Loans</div>
+                <div style="font-weight:700;font-size:14px;color:var(--danger)">${KES(totalOutstanding)}</div>
+              </div>
+              <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:8px 10px">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;text-transform:uppercase">Total Loaned</div>
+                <div style="font-weight:600;font-size:13px">${KES(totalLoanValue)}</div>
+              </div>
+              <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:8px 10px">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;text-transform:uppercase">Total Repaid</div>
+                <div style="font-weight:600;font-size:13px;color:var(--info)">${KES(totalPaid)}</div>
+              </div>
+            </div>
+
+            <div style="margin-bottom:4px">
+              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:4px">
+                <span>Savings vs Outstanding</span>
+                <span>${ratio >= 99 ? 'No outstanding loans' : (ratio*100).toFixed(0)+'% covered by savings'}</span>
+              </div>
+              <div style="height:8px;border-radius:4px;background:var(--danger);overflow:hidden">
+                <div style="height:100%;width:${barW}%;background:var(--success);border-radius:4px;transition:width .3s"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px">
+                <span style="color:var(--success)">▮ Savings</span>
+                <span style="color:var(--danger)">▮ Outstanding</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
+
+    ${state._loanGroupFilter && groupSummary.length === 1 ? (() => {
+      const {g, totalLoanValue, totalOutstanding, totalPaid, totalSavings, memberCount, ratio, health} = groupSummary[0];
+      const healthColor = health==='good' ? 'var(--success)' : health==='warn' ? 'var(--warning)' : 'var(--danger)';
+      const healthLabel = health==='good' ? '✅ Healthy' : health==='warn' ? '⚠️ Watch' : '🔴 At Risk';
+      const barW = Math.min(100, totalOutstanding > 0 ? (totalSavings / (totalSavings + totalOutstanding)) * 100 : 100);
+      return `
+      <div class="card card-pad" style="margin-bottom:16px;border-left:4px solid ${healthColor}">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-weight:700;font-size:15px">${g.name} <span style="font-size:12px;color:${healthColor};margin-left:6px">${healthLabel}</span></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${memberCount} member(s) with loans</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="state._loanGroupFilter='';pageLoans()">✕ Clear filter</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
+          <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:10px"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Total Savings</div><div style="font-weight:700;font-size:15px;color:var(--success)">${KES(totalSavings)}</div></div>
+          <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:10px"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Outstanding</div><div style="font-weight:700;font-size:15px;color:var(--danger)">${KES(totalOutstanding)}</div></div>
+          <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:10px"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Total Loaned</div><div style="font-weight:600;font-size:14px">${KES(totalLoanValue)}</div></div>
+          <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:10px"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Total Repaid</div><div style="font-weight:600;font-size:14px;color:var(--info)">${KES(totalPaid)}</div></div>
+        </div>
+        <div style="margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:4px">
+            <span>Savings vs Outstanding</span>
+            <span>${ratio >= 99 ? 'No outstanding loans' : (ratio*100).toFixed(0)+'% covered by savings'}</span>
+          </div>
+          <div style="height:10px;border-radius:5px;background:var(--danger);overflow:hidden">
+            <div style="height:100%;width:${barW}%;background:var(--success);border-radius:5px"></div>
+          </div>
+        </div>
+      </div>`;
+    })() : ''}
+
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
