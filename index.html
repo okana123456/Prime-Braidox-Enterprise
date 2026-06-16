@@ -745,7 +745,21 @@ async function audit(action, entity=null, entity_id=null, oldV=null, newV=null){
  * DERIVED METRICS
  * ===================================================================== */
 function memberSavings(memberId){
-  return state.data.savings.filter(s=>s.member_id===memberId && s.status!=='pending').reduce((a,b)=>a + Number(b.amount||0), 0);
+  // Only count 'savings' type — exclude 'registration' and 'deposit' installments
+  // so they don't inflate the regular savings balance or affect loan eligibility
+  return state.data.savings
+    .filter(s => s.member_id === memberId && s.status !== 'pending' && (!s.type || s.type === 'savings'))
+    .reduce((a,b) => a + Number(b.amount||0), 0);
+}
+function memberRegPaid(memberId){
+  return state.data.savings
+    .filter(s => s.member_id === memberId && s.status !== 'rejected' && s.type === 'registration')
+    .reduce((a,b) => a + Number(b.amount||0), 0);
+}
+function memberDepositPaid(memberId){
+  return state.data.savings
+    .filter(s => s.member_id === memberId && s.status !== 'rejected' && s.type === 'deposit')
+    .reduce((a,b) => a + Number(b.amount||0), 0);
 }
 function memberLoan(memberId){
   return state.data.loans.find(l=>l.member_id===memberId && l.status==='active');
@@ -2566,39 +2580,31 @@ function renderMeetList(){
   const members = state.data.members.filter(x=>x.group_id===m.groupId && (!x.status || x.status==='active'));
   if(!members.length){ host.innerHTML = `<div class="card card-pad empty"><h4>No active members</h4><p>Register members to this group before recording a meeting.</p></div>`; return; }
 
-  // Pre-compute each member's outstanding registration balance
+  // Pre-compute registration fee total per member
   const regFeeTotal = (mem) => Number(mem.registration_fee) || Number(state.settings?.registration_fee) || 600;
-  const regPaid = (memId) => state.data.savings
-    .filter(s => s.member_id === memId && s.type === 'registration' && s.status !== 'rejected')
-    .reduce((a,b) => a + Number(b.amount||0), 0);
-
-  // Pre-compute each member's inventory deposits paid
-  const depositPaid = (memId) => state.data.savings
-    .filter(s => s.member_id === memId && s.type === 'deposit' && s.status !== 'rejected')
-    .reduce((a,b) => a + Number(b.amount||0), 0);
 
   host.innerHTML = `
     <div class="card">
-      <div class="card-head">
-        <h3>${members.length} members — ${m.date}</h3>
+      <div class="card-head" style="flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0">${members.length} members — ${m.date}</h3>
         <button class="btn btn-primary" onclick="submitMeeting()">✓ Submit meeting</button>
       </div>
-      <div style="overflow-x:auto">
-        <table class="tbl" style="min-width:900px">
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+        <table class="tbl" style="min-width:700px;font-size:13px">
           <thead>
-            <tr>
-              <th style="min-width:160px">Member</th>
-              <th class="num" style="min-width:120px">Savings (KES)</th>
-              <th class="num" style="min-width:130px">
-                Reg. Installment
-                <div style="font-weight:400;font-size:10px;color:var(--text-muted)">Towards KES 600 fee</div>
+            <tr style="white-space:nowrap">
+              <th style="min-width:140px;position:sticky;left:0;background:var(--surface);z-index:2">Member</th>
+              <th class="num" style="min-width:110px">Savings (KES)</th>
+              <th style="min-width:200px">Loan Repayment(s)</th>
+              <th class="num" style="min-width:120px">
+                Reg. Fee
+                <div style="font-weight:400;font-size:10px;color:var(--text-muted)">Towards KES ${Number(state.settings?.registration_fee||600).toLocaleString()}</div>
               </th>
-              <th class="num" style="min-width:130px">
-                Asset Deposit
-                <div style="font-weight:400;font-size:10px;color:var(--text-muted)">Towards order deposit</div>
+              <th class="num" style="min-width:110px">
+                Deposit
+                <div style="font-weight:400;font-size:10px;color:var(--text-muted)">Asset order</div>
               </th>
-              <th style="min-width:220px">Loan Repayment(s)</th>
-              <th style="min-width:80px;text-align:center">Absent</th>
+              <th style="min-width:60px;text-align:center">Absent</th>
             </tr>
           </thead>
           <tbody>
@@ -2609,51 +2615,53 @@ function renderMeetList(){
               lns.forEach(ln => { if(ent.repayments[ln.id] === undefined) ent.repayments[ln.id] = Number(ln.weekly_installment)||0; });
 
               const regTotal = regFeeTotal(mem);
-              const regPaidAmt = regPaid(mem.id);
+              const regPaidAmt = memberRegPaid(mem.id);
               const regBalance = Math.max(0, regTotal - regPaidAmt);
-              const depPaidAmt = depositPaid(mem.id);
-
+              const depPaidAmt = memberDepositPaid(mem.id);
               const dis = ent.absent ? 'disabled' : '';
 
               return `<tr id="mrow-${mem.id}" ${ent.absent ? 'style="opacity:0.45"' : ''}>
-                <td>
-                  <div style="font-weight:600;font-size:13px">${mem.full_name}</div>
-                  <div style="font-size:11px;color:var(--text-muted)">Savings: ${KES(sv)}${lns.length?` · ${lns.length} loan(s)`:''}</div>
+                <td style="position:sticky;left:0;background:var(--surface);z-index:1">
+                  <div style="font-weight:600;font-size:12px;line-height:1.3">${mem.full_name}</div>
+                  <div style="font-size:10px;color:var(--text-muted);margin-top:1px">Sav: ${KES(sv)}${lns.length?` · ${lns.length} loan(s)`:''}</div>
                 </td>
                 <td>
-                  <input type="number" min="0" class="meet-input" data-id="${mem.id}" data-f="savings"
-                    value="${ent.savings}" ${dis} style="width:100%;text-align:right" placeholder="0" />
-                </td>
-                <td>
-                  ${regBalance > 0 ? `
-                  <input type="number" min="0" max="${regBalance}" class="meet-input" data-id="${mem.id}" data-f="reg_installment"
-                    value="${ent.reg_installment}" ${dis} style="width:100%;text-align:right" placeholder="0" />
-                  <div style="font-size:10px;color:var(--warning);margin-top:2px">Balance: ${KES(regBalance)}</div>
-                  ` : `<div style="font-size:11px;color:var(--success);text-align:center">✓ Paid ${KES(regTotal)}</div>`}
-                </td>
-                <td>
-                  <input type="number" min="0" class="meet-input" data-id="${mem.id}" data-f="deposit"
-                    value="${ent.deposit}" ${dis} style="width:100%;text-align:right" placeholder="0" />
-                  ${depPaidAmt > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Deposited so far: ${KES(depPaidAmt)}</div>` : ''}
+                  <input type="number" min="0" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-f="savings"
+                    value="${ent.savings}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
                 </td>
                 <td>
                   ${lns.length ? lns.map(ln => {
                     const out = Math.max(0, Number(ln.total_payable) - loanPaid(ln.id));
-                    return `<div style="margin-bottom:6px">
-                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">${ln.asset_name} · out: ${KES(out)}</div>
-                      <input type="number" min="0" class="meet-input" data-id="${mem.id}" data-loanid="${ln.id}"
-                        value="${ent.repayments[ln.id]||''}" ${dis} style="width:100%;text-align:right" placeholder="0" />
+                    return `<div style="margin-bottom:4px">
+                      <div style="font-size:10px;color:var(--text-muted);margin-bottom:1px;white-space:nowrap">${ln.asset_name} · bal:${KES(out)}</div>
+                      <input type="number" min="0" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-loanid="${ln.id}"
+                        value="${ent.repayments[ln.id]||''}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
                     </div>`;
-                  }).join('') : `<span style="font-size:11px;color:var(--text-muted)">No active loans</span>`}
+                  }).join('') : `<span style="font-size:11px;color:var(--text-muted)">No loans</span>`}
                 </td>
-                <td style="text-align:center">
+                <td>
+                  ${regBalance > 0 ? `
+                  <input type="number" min="0" max="${regBalance}" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-f="reg_installment"
+                    value="${ent.reg_installment}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
+                  <div style="font-size:10px;color:var(--warning);margin-top:1px;white-space:nowrap">Bal: ${KES(regBalance)}</div>
+                  ` : `<div style="font-size:11px;color:var(--success);text-align:center">✓ Done</div>`}
+                </td>
+                <td>
+                  <input type="number" min="0" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-f="deposit"
+                    value="${ent.deposit}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
+                  ${depPaidAmt > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:1px;white-space:nowrap">So far: ${KES(depPaidAmt)}</div>` : ''}
+                </td>
+                <td style="text-align:center;vertical-align:middle">
                   <input type="checkbox" class="meet-input" data-id="${mem.id}" data-f="absent"
-                    ${ent.absent?'checked':''} style="width:18px;height:18px;cursor:pointer" />
+                    ${ent.absent?'checked':''} style="width:20px;height:20px;cursor:pointer;accent-color:var(--danger)" />
                 </td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
+      </div>
+      <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border)">
+        💡 Tip: Scroll right to see all columns. Tap a number field and use your keypad to enter amounts.
       </div>
     </div>
   `;
@@ -2801,9 +2809,9 @@ function pageArrears(){
 
     // Penalty: add 20 KES for each week the loan has been overdue (i.e. arrears > 0)
     const baseArrears = Math.max(0, expectedPaid - paid);
-    const overdueWeeks = baseArrears > 0 && weekly > 0 ? Math.floor(baseArrears / weekly) : 0;
-    const penalty = overdueWeeks * 20;
-    const arrears = baseArrears > 0 ? baseArrears + penalty : 0;
+    const arrears = baseArrears;
+    const penalty = 0;
+    const overdueWeeks = 0;
 
     // Determine next upcoming due date (the next installment date after today)
     let nextDueDate = null;
@@ -2856,9 +2864,7 @@ function pageArrears(){
   ];
 
   // Column count helper
-  const colCount = isAdmin
-    ? (tab === 'arrears' ? 10 : 9)
-    : (tab === 'arrears' ? 9  : 8);
+  const colCount = isAdmin ? 9 : 8;
 
   $('page').innerHTML = `
     <div class="page-head">
@@ -2911,7 +2917,7 @@ function pageArrears(){
 
     ${tab==='arrears' ? `
     <div style="background:var(--danger-50,#fff1f0);border:1px solid var(--danger);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:var(--danger);margin-bottom:8px">
-      ⚠️ <b>In Arrears</b> — these clients have missed one or more installment payments. Amount shown includes the base arrears plus 20 KES/week penalty.
+      ⚠️ <b>In Arrears</b> — these clients have missed one or more installment payments. Amount shown is the total overdue balance.
     </div>` : ''}
     ${tab==='duetoday' ? `
     <div style="background:#fffbeb;border:1px solid var(--warning);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:#92400e;margin-bottom:8px">
@@ -2923,9 +2929,8 @@ function pageArrears(){
         <thead><tr>
           <th>Member</th><th>Group</th>${isAdmin?'<th>Officer</th>':''}
           <th>Asset</th><th>Start Date</th>
-          <th class="num">${tab==='arrears'?'Arrears + Penalty (KES)':'Amount Due (KES)'}</th>
+          <th class="num">${tab==='arrears'?'Arrears (KES)':'Amount Due (KES)'}</th>
           <th class="num">Weekly Inst.</th>
-          ${tab==='arrears'?'<th class="num">Penalty</th>':''}
           <th>Next Due Date</th><th>Status</th>
         </tr></thead>
         <tbody>
@@ -2946,7 +2951,6 @@ function pageArrears(){
               <td>${fmtDate(r.loan.start_date)}</td>
               <td class="num"><b style="color:${amtColor}">${KES(amountDisplay)}</b></td>
               <td class="num">${KES(r.expectedInstallment)}</td>
-              ${tab==='arrears'?`<td class="num" style="color:var(--danger);font-size:12px">${r.penalty>0?'+'+KES(r.penalty):'—'}</td>`:''}
               <td>${fmtDate(r.nextDueDate)}</td>
               <td>${statusBadge}</td>
             </tr>`;
@@ -5660,16 +5664,22 @@ function pageAccounting(){
   const filterBtns = [['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']];
 
   // === INCOME ===
-  const savingsInPeriod = state.data.savings.filter(s=>inRange(s.meeting_date||''));
+  // Regular savings only (exclude registration and deposit types)
+  const savingsInPeriod = state.data.savings.filter(s => inRange(s.meeting_date||'') && (!s.type || s.type === 'savings'));
   const totalSavingsIn = savingsInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
   const repayInPeriod = state.data.repayments.filter(r=>inRange(r.meeting_date||''));
   const totalPrincipalIn = repayInPeriod.reduce((a,b)=>a+Number(b.principal||0),0);
   const totalInterestIn = repayInPeriod.reduce((a,b)=>a+Number(b.interest||0),0);
   const totalRepayIn = repayInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
 
-  // === FIX 4: Registration Fees ===
-  const membersRegisteredInPeriod = state.data.members.filter(m=>inRange(m.registered_on||''));
-  const totalRegFees = membersRegisteredInPeriod.reduce((a,m)=>a+Number(m.registration_fee||0),0);
+  // === REGISTRATION FEES (actual installments paid, tracked separately) ===
+  const regInstallmentsInPeriod = state.data.savings.filter(s => inRange(s.meeting_date||'') && s.type === 'registration');
+  const totalRegFees = regInstallmentsInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
+  const uniqueRegMembers = new Set(regInstallmentsInPeriod.map(s=>s.member_id));
+
+  // === ASSET DEPOSITS (tracked separately from savings) ===
+  const depositInstallmentsInPeriod = state.data.savings.filter(s => inRange(s.meeting_date||'') && s.type === 'deposit');
+  const totalDepositsIn = depositInstallmentsInPeriod.reduce((a,b)=>a+Number(b.amount||0),0);
 
   // === EXPENSES (Purchases) ===
   const purchasesInPeriod = state.data.purchases.filter(p=>inRange(p.received_on||''));
@@ -5727,7 +5737,8 @@ function pageAccounting(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px">
       <div class="kpi k-success"><div class="l">Savings collected</div><div class="v">${KES(totalSavingsIn)}</div><div class="d">${savingsInPeriod.length} entries</div></div>
       <div class="kpi k-primary"><div class="l">Loan repayments</div><div class="v">${KES(totalRepayIn)}</div><div class="d">Interest ${KES(totalInterestIn)}</div></div>
-      <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${membersRegisteredInPeriod.length} new member${membersRegisteredInPeriod.length!==1?'s':''}</div></div>
+      <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${uniqueRegMembers.size} member(s) · ${regInstallmentsInPeriod.length} installment(s)</div></div>
+      <div class="kpi k-success"><div class="l">Asset deposits</div><div class="v">${KES(totalDepositsIn)}</div><div class="d">${depositInstallmentsInPeriod.length} installment(s)</div></div>
       <div class="kpi k-warn"><div class="l">Principal disbursed</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
       <div class="kpi k-primary"><div class="l">Expected return</div><div class="v">${KES(totalExpectedReturn)}</div><div class="d">Interest: ${KES(totalExpectedReturn-totalLoansOut)}</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
@@ -5742,13 +5753,14 @@ function pageAccounting(){
           <tr><td style="padding:6px 0;color:var(--text-muted)">Savings received</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalSavingsIn)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loan repayments (principal)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalPrincipalIn)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Interest income</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalInterestIn)}</td></tr>
-          <tr><td style="padding:6px 0;color:var(--text-muted)">Registration fees (${membersRegisteredInPeriod.length} members)</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalRegFees)}</td></tr>
-          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn+totalRegFees)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Registration fee installments (${uniqueRegMembers.size} member(s))</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalRegFees)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Asset deposit installments</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalDepositsIn)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalPurchasesOut)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalLoansOut)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Operational expenses (${expensesInPeriod.length})</td><td style="text-align:right;font-weight:600;color:var(--danger)">−${KES(totalExpensesOut)}</td></tr>
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">−${KES(totalPurchasesOut+totalLoansOut+totalExpensesOut)}</td></tr>
-          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn+totalRegFees-totalPurchasesOut-totalLoansOut-totalExpensesOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees-totalPurchasesOut-totalLoansOut-totalExpensesOut)}</td></tr>
+          <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn-totalPurchasesOut-totalLoansOut-totalExpensesOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn-totalPurchasesOut-totalLoansOut-totalExpensesOut)}</td></tr>
         </table>
       </div>
       <div class="card card-pad">
