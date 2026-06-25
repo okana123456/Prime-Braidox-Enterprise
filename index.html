@@ -1862,15 +1862,18 @@ function pageMembers(){
       <div><h1>Members</h1><div class="desc">Registered members${isAdmin?'':' in your groups'}.</div></div>
       <div class="actions"><button class="btn btn-primary" onclick="openMemberWizard()">Register member</button></div>
     </div>
-    <div class="toolbar">
+    <div class="toolbar" style="flex-wrap:wrap;gap:8px">
       <div class="search-box grow">
         <span class="ic">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
         <input id="mem-search" placeholder="Search by name, ID or phone" value="${state._memberSearch||''}"/>
       </div>
-      <select id="mem-group" style="max-width:240px">
-        <option value="">All groups</option>
-        ${state.data.groups.filter(g=>isAdmin||g.officer_id===state.staff.id).map(g=>`<option value="${g.id}" ${filterGroup===g.id?'selected':''}>${g.name}</option>`).join('')}
-      </select>
+      <div style="position:relative;min-width:220px">
+        <input id="mem-group-search" type="text" placeholder="🔍 Filter by group name…"
+          value="${filterGroup ? (state.data.groups.find(g=>g.id===filterGroup)?.name||'') : ''}"
+          autocomplete="off"
+          style="width:100%;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
+        <div id="mem-group-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:99;max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)"></div>
+      </div>
     </div>
     <div class="table-wrap">
       <table class="tbl">
@@ -1904,7 +1907,27 @@ function pageMembers(){
     </div>` : ''}
   `;
   $('mem-search').addEventListener('input', e => { state._memberSearch = e.target.value; state._membersPage=0; pageMembers(); setTimeout(()=>{ const el=$('mem-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },0); });
-  $('mem-group').addEventListener('change', e => { state.viewCtx = { groupId: e.target.value }; state._membersPage=0; pageMembers(); });
+
+  // Group live search
+  const memGrpSearch = $('mem-group-search');
+  const memGrpDrop = $('mem-group-drop');
+  const memberGroupList = state.data.groups.filter(g=>isAdmin||g.officer_id===state.staff.id);
+  const showMemGrpDrop = (q) => {
+    const matches = memberGroupList.filter(g=>!q||g.name.toLowerCase().includes(q.toLowerCase()));
+    memGrpDrop.innerHTML = [
+      `<div style="padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text-muted)"
+        onmousedown="state.viewCtx={groupId:''};state._membersPage=0;pageMembers()">All groups</div>`,
+      ...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
+        onmousedown="state.viewCtx={groupId:'${g.id}'};state._membersPage=0;pageMembers()">${g.name}
+        <span style="font-size:10px;color:var(--text-muted);margin-left:6px">${g.meeting_day||''} ${g.group_code?'· '+g.group_code:''}</span></div>`)
+    ].join('');
+    memGrpDrop.style.display = 'block';
+  };
+  if(memGrpSearch){
+    memGrpSearch.addEventListener('focus', () => showMemGrpDrop(memGrpSearch.value));
+    memGrpSearch.addEventListener('input', () => showMemGrpDrop(memGrpSearch.value));
+    memGrpSearch.addEventListener('blur', () => setTimeout(()=>{ memGrpDrop.style.display='none'; },200));
+  }
 }
 function memberActions(ev, id){
   const m = state.data.members.find(x=>x.id===id);
@@ -2546,7 +2569,19 @@ function pageMeeting(){
   state._meet = state._meet || { groupId:'', date: todayISO(), entries:{} };
   const m = state._meet;
   const isAdmin = state.staff.role === 'admin';
-  const myGroups = isAdmin ? state.data.groups : state.data.groups.filter(g=>g.officer_id === state.staff.id);
+
+  // Sort groups chronologically by meeting day starting from today
+  const dayOrder = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const todayDow = new Date().toLocaleDateString('en-US',{weekday:'long'}); // e.g. "Wednesday"
+  const todayIdx = dayOrder.indexOf(todayDow);
+  // Rotate the order so today's day comes first, then future days, then past days
+  const rotated = [...dayOrder.slice(todayIdx), ...dayOrder.slice(0, todayIdx)];
+  const dayWeight = Object.fromEntries(rotated.map((d,i)=>[d,i]));
+
+  const allMyGroups = isAdmin ? state.data.groups : state.data.groups.filter(g=>g.officer_id === state.staff.id);
+  const myGroups = allMyGroups.slice().sort((a,b)=>(dayWeight[a.meeting_day]??8)-(dayWeight[b.meeting_day]??8));
+
+  const selectedGroup = myGroups.find(g=>g.id===m.groupId);
 
   $('page').innerHTML = `
     <div class="page-head">
@@ -2555,11 +2590,16 @@ function pageMeeting(){
 
     <div class="card card-pad">
       <div class="grid-2">
-        <div class="field"><label>Group</label>
-          <select id="m-group">
-            <option value="">— Select group —</option>
-            ${myGroups.map(g=>`<option value="${g.id}" ${m.groupId===g.id?'selected':''}>${g.name} · ${g.meeting_day}</option>`).join('')}
-          </select>
+        <div class="field">
+          <label>Group</label>
+          <div style="position:relative">
+            <input id="meet-grp-search" type="text" placeholder="🔍 Search group name…"
+              value="${selectedGroup ? selectedGroup.name + ' · ' + (selectedGroup.meeting_day||'') : ''}"
+              autocomplete="off"
+              style="width:100%;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
+            <div id="meet-grp-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:99;max-height:260px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.14)"></div>
+          </div>
+          ${selectedGroup ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📅 Meets: <b>${selectedGroup.meeting_day||'—'}</b>${selectedGroup.meeting_time?' at '+selectedGroup.meeting_time:''} · Code: <b>${selectedGroup.group_code||'—'}</b></div>` : ''}
         </div>
         <div class="field"><label>Meeting date</label><input id="m-date" type="date" value="${m.date}" /></div>
       </div>
@@ -2567,8 +2607,37 @@ function pageMeeting(){
 
     <div id="meet-list" style="margin-top:16px"></div>
   `;
-  $('m-group').addEventListener('change', e => { m.groupId = e.target.value; m.entries = {}; renderMeetList(); });
+
+  // Wire up meeting date
   $('m-date').addEventListener('change', e => { m.date = e.target.value; });
+
+  // Group live search — sorted chronologically (already sorted in myGroups)
+  const meetGrpSearch = $('meet-grp-search');
+  const meetGrpDrop = $('meet-grp-drop');
+  const showMeetGrpDrop = (q) => {
+    const matches = myGroups.filter(g=>!q||g.name.toLowerCase().includes(q.toLowerCase()));
+    meetGrpDrop.innerHTML = matches.length ? matches.map(g => {
+      const isToday = g.meeting_day === todayDow;
+      const isMine = !isAdmin || true;
+      return `<div style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);${isToday?'background:var(--success-50,#f0fdf4)':''}"
+        onmousedown="
+          state._meet.groupId='${g.id}';
+          state._meet.entries={};
+          document.getElementById('meet-grp-search').value='${g.name.replace(/'/g,"\\'")} · ${g.meeting_day||''}';
+          document.getElementById('meet-grp-drop').style.display='none';
+          renderMeetList();
+        ">
+        <div style="font-weight:600;font-size:13px">${g.name} ${isToday?'<span style="font-size:10px;background:var(--success);color:#fff;padding:1px 6px;border-radius:99px;margin-left:4px">TODAY</span>':''}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">📅 ${g.meeting_day||'—'}${g.meeting_time?' at '+g.meeting_time:''} &nbsp;·&nbsp; Code: <b>${g.group_code||'—'}</b></div>
+      </div>`;
+    }).join('') : `<div style="padding:10px 14px;font-size:12px;color:var(--text-muted)">No groups found</div>`;
+    meetGrpDrop.style.display = 'block';
+  };
+
+  meetGrpSearch.addEventListener('focus', () => showMeetGrpDrop(meetGrpSearch.value.split('·')[0].trim()));
+  meetGrpSearch.addEventListener('input', () => showMeetGrpDrop(meetGrpSearch.value));
+  meetGrpSearch.addEventListener('blur', () => setTimeout(()=>{ meetGrpDrop.style.display='none'; },250));
+
   renderMeetList();
 }
 function renderMeetList(){
@@ -3050,10 +3119,13 @@ function pageLoans(){
         ${['active','completed','defaulted','all'].map(t => `<button class="${tab===t?'active':''}" onclick="state._loanTab='${t}';pageLoans()">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select style="max-width:200px;font-size:13px" onchange="state._loanGroupFilter=this.value; pageLoans()">
-          <option value="">All Groups</option>
-          ${visibleGroups.map(g=>`<option value="${g.id}" ${state._loanGroupFilter===g.id?'selected':''}>${g.name}</option>`).join('')}
-        </select>
+        <div style="position:relative;min-width:220px">
+          <input id="loan-grp-search" type="text" placeholder="🔍 Search group name…"
+            value="${state._loanGroupFilter ? (visibleGroups.find(g=>g.id===state._loanGroupFilter)?.name||'') : ''}"
+            autocomplete="off"
+            style="width:100%;padding:7px 12px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
+          <div id="loan-grp-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:99;max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)"></div>
+        </div>
         ${isAdmin ? `
         <select style="max-width:200px" onchange="state._loanOfficerFilter=this.value; pageLoans()">
           <option value="">All Officers</option>
@@ -3201,6 +3273,26 @@ function pageLoans(){
   const loanEndEl = document.getElementById('loan-custom-end');
   if(loanStartEl) loanStartEl.addEventListener('change', e => { _loanCustomStart = e.target.value; pageLoans(); });
   if(loanEndEl) loanEndEl.addEventListener('change', e => { _loanCustomEnd = e.target.value; pageLoans(); });
+
+  // Group live search
+  const loanGrpSearch = document.getElementById('loan-grp-search');
+  const loanGrpDrop = document.getElementById('loan-grp-drop');
+  if(loanGrpSearch && loanGrpDrop){
+    const showLoanGrpDrop = (q) => {
+      const matches = visibleGroups.filter(g=>!q||g.name.toLowerCase().includes(q.toLowerCase()));
+      loanGrpDrop.innerHTML = [
+        `<div style="padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text-muted)"
+          onmousedown="state._loanGroupFilter='';pageLoans()">All Groups</div>`,
+        ...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
+          onmousedown="state._loanGroupFilter='${g.id}';pageLoans()">${g.name}
+          <span style="font-size:10px;color:var(--text-muted);margin-left:6px">${g.meeting_day||''} ${g.group_code?'· '+g.group_code:''}</span></div>`)
+      ].join('');
+      loanGrpDrop.style.display = matches.length ? 'block' : 'none';
+    };
+    loanGrpSearch.addEventListener('focus', () => showLoanGrpDrop(loanGrpSearch.value));
+    loanGrpSearch.addEventListener('input', () => showLoanGrpDrop(loanGrpSearch.value));
+    loanGrpSearch.addEventListener('blur', () => setTimeout(()=>{ loanGrpDrop.style.display='none'; },200));
+  }
 }
 function loanActions(ev, id){
   const l = state.data.loans.find(x=>x.id===id);
