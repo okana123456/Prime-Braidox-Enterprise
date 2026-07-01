@@ -7031,6 +7031,8 @@ function exportAccountingReport(){
     const ok = await loadStaff();
     if(!ok){ await sb.auth.signOut(); state.session=null; render(); return; }
     await loadSettings();
+    await loadBillingStatus({ silent:true });
+    if(isSubscriptionLocked()){ render(); return; }
     await smartLoadAll();
     setupRealtime();
     flushQueue();
