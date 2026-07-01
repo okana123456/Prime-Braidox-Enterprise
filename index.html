@@ -1002,6 +1002,17 @@ function billingMonthISO(){ const d = billingTodayParts(); return `${d.year}-${d
 function isAdminBillingUser(){ return !!state.staff && state.staff.role === 'admin'; }
 function isSubscriptionLocked(){ return isAdminBillingUser() && !!state.billing?.locked; }
 function shouldShowBillingReminder(){ return isAdminBillingUser() && !!state.billing?.reminder; }
+function billingReminderMinimized(){
+  return sessionStorage.getItem('pb_billing_reminder_minimized') === state.billing?.cycleMonth;
+}
+function minimizeBillingReminder(){
+  sessionStorage.setItem('pb_billing_reminder_minimized', state.billing?.cycleMonth || billingMonthISO());
+  render();
+}
+function showBillingReminder(){
+  sessionStorage.removeItem('pb_billing_reminder_minimized');
+  render();
+}
 async function loadBillingStatus({ silent=false } = {}){
   if(!isAdminBillingUser()){
     state.billing = { status:'not_applicable', paid:true, cycleMonth:billingMonthISO(), checkedAt:new Date().toISOString(), locked:false, reminder:false, pending:false };
@@ -1068,7 +1079,29 @@ async function refreshBillingStatus(){
 }
 function renderBillingReminder(){
   if(!shouldShowBillingReminder()) return '';
-  return `<div class="card card-pad" style="border-left:4px solid var(--warning);margin-bottom:14px"><div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:240px"><div style="font-weight:700;margin-bottom:4px">Subscription payment reminder</div><div class="muted" style="font-size:13px;line-height:1.5">${billingMessage()}</div></div><div style="font-weight:700;color:var(--danger)">KES 3,000</div></div>${renderBillingPaymentForm({ locked:false })}</div>`;
+  if(billingReminderMinimized()){
+    return `<button onclick="showBillingReminder()" style="position:fixed;right:18px;bottom:18px;z-index:80;border:none;border-radius:999px;background:var(--warning);color:#fff;font-weight:800;padding:11px 16px;box-shadow:var(--shadow-lg);cursor:pointer">Subscription due - KES 3,000</button>`;
+  }
+  return `<div style="position:fixed;inset:0;z-index:75;background:rgba(15,23,42,.45);backdrop-filter:blur(2px);display:grid;place-items:center;padding:20px">
+    <div class="card card-pad" style="width:100%;max-width:560px;border-top:4px solid var(--warning);box-shadow:var(--shadow-lg)">
+      <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start">
+        <div>
+          <h2 style="margin:0 0 6px;font-size:20px">Subscription payment reminder</h2>
+          <div class="muted" style="font-size:13px;line-height:1.5">${billingMessage()}</div>
+        </div>
+        <div style="font-weight:800;color:var(--danger);white-space:nowrap">KES 3,000</div>
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin:14px 0 0">
+        <div style="display:flex;justify-content:space-between;padding:5px 0"><span class="muted">Lock date</span><strong>${billingDueDateLabel()}</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:5px 0"><span class="muted">Paybill</span><strong>4024241</strong></div>
+        <div style="display:flex;justify-content:space-between;padding:5px 0"><span class="muted">Reference</span><strong>RUDDERDATA</strong></div>
+      </div>
+      ${renderBillingPaymentForm({ locked:false })}
+      <div style="display:flex;justify-content:flex-end;margin-top:10px">
+        <button class="btn btn-outline" onclick="minimizeBillingReminder()">Minimize reminder</button>
+      </div>
+    </div>
+  </div>`;
 }
 function renderSubscriptionLock(){
   const app = $('app');
@@ -1080,8 +1113,8 @@ function render(){
   if(isSubscriptionLocked()){ renderSubscriptionLock(); return; }
   renderShell();
   if(shouldShowBillingReminder()){
-    const page = $('page');
-    if(page){ page.insertAdjacentHTML('afterbegin', renderBillingReminder()); attachBillingPaymentForm(); }
+    const app = $('app');
+    if(app){ app.insertAdjacentHTML('beforeend', renderBillingReminder()); attachBillingPaymentForm(); }
   }
 }
 /* =====================================================================
