@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -271,7 +271,7 @@ tr[style*="danger-50"] .sticky-name{background:var(--danger-50)}
  * ===================================================================== */
 
 /* =====================================================================
- * âš ï¸  SECURITY NOTICE: ROW LEVEL SECURITY (RLS) â€” MANDATORY SETUP
+ * Warning:   SECURITY NOTICE: ROW LEVEL SECURITY (RLS) - MANDATORY SETUP
  * =====================================================================
  * This frontend relies on Supabase Auth sessions to identify which
  * business is logged in. However, the FRONTEND ALONE CANNOT ENFORCE
@@ -305,14 +305,14 @@ tr[style*="danger-50"] .sticky-name{background:var(--danger-50)}
  *   --         pb_reconciliations, pb_audit_log, pb_staff.
  *
  * Without RLS, ALL businesses can read and write ALL data.
- * The frontend queries rely on the active session â€” but RLS is the
+ * The frontend queries rely on the active session - but RLS is the
  * only server-enforced guarantee of data isolation.
  * ===================================================================== */
 
 const SUPABASE_URL = 'https://zkklawvlnhtaokhtjswk.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpra2xhd3Zsbmh0YW9raHRqc3drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NTY5MDAsImV4cCI6MjA5MzEzMjkwMH0.U3nXJkvl3ZMlyzWv7bEugY4Wtvt6bvYK8-mCVXRIPO4';
 /* Master key required to register a NEW business on the signup form.
-   Loan officers do NOT self-register â€” the admin creates them in Staff & Permissions. */
+   Loan officers do NOT self-register - the admin creates them in Staff & Permissions. */
 const BUSINESS_REGISTRATION_KEY = 'BFADMIN2026';
 let BIZ_ID = 'pb_default';
 const SESSION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
@@ -481,7 +481,7 @@ const state = {
 
 /* ----- Money formatter ----- */
 const KES = n => 'KES ' + (Number(n||0)).toLocaleString('en-KE', { minimumFractionDigits:0, maximumFractionDigits:2 });
-const fmtDate = d => d ? new Date(d).toLocaleDateString('en-KE', { day:'2-digit', month:'short', year:'numeric' }) : 'â€”';
+const fmtDate = d => d ? new Date(d).toLocaleDateString('en-KE', { day:'2-digit', month:'short', year:'numeric' }) : ' - ';
 const todayISO = () => new Date().toISOString().slice(0,10);
 
 /* ----- M-Pesa group code generator -----
@@ -490,7 +490,7 @@ const todayISO = () => new Date().toISOString().slice(0,10);
  * day's total collection to the business Paybill using this code as the
  * account reference, so incoming payments can be matched back to the group. */
 function generateGroupCode(){
-  // Generates a random 4-digit number (1000â€“9999) as the M-Pesa account code.
+  // Generates a random 4-digit number (1000-9999) as the M-Pesa account code.
   // Easy for members to type, no symbols, no ambiguous characters.
   let code, attempts = 0;
   do {
@@ -499,7 +499,7 @@ function generateGroupCode(){
   } while(state.data.groups.some(g => g.group_code === code) && attempts < 100);
   return code;
 }
-const initials = name => (name||'').split(/\s+/).filter(Boolean).slice(0,2).map(s=>s[0]).join('').toUpperCase() || 'â€”';
+const initials = name => (name||'').split(/\s+/).filter(Boolean).slice(0,2).map(s=>s[0]).join('').toUpperCase() || ' - ';
 const normalisePhone = p => {
   if(!p) return '';
   let s = String(p).replace(/\D/g,'');
@@ -761,7 +761,7 @@ async function audit(action, entity=null, entity_id=null, oldV=null, newV=null){
  * DERIVED METRICS
  * ===================================================================== */
 function memberSavings(memberId){
-  // Only count 'savings' type â€” exclude 'registration' and 'deposit' installments
+  // Only count 'savings' type - exclude 'registration' and 'deposit' installments
   // so they don't inflate the regular savings balance or affect loan eligibility
   return state.data.savings
     .filter(s => s.member_id === memberId && s.status !== 'pending' && (!s.type || s.type === 'savings'))
@@ -863,7 +863,7 @@ function formatMpesaDateTime(t){
     const dt = new Date(raw);
     if(!Number.isNaN(dt.getTime())) return dt.toLocaleString('en-KE', { dateStyle:'medium', timeStyle:'short' });
   }
-  return 'â€”';
+  return ' - ';
 }
 function mpesaTxnDateISO(t){
   const raw = String(t?.transaction_time || t?.trans_time || t?.created_at || '').trim();
@@ -919,7 +919,7 @@ function memberPerformance(memberId){
   if(!loans.length) return { score:null, label:'No loan history', badgeClass:'b-grey', summary:'No loan performance history yet.', source:'No loan' };
   const active = loans.find(l=>l.status==='active');
   const selected = active || loans[0];
-  return { ...loanPerformance(selected), loan:selected, source:active?'Active loan':'Latest loan' };
+  return {...loanPerformance(selected), loan:selected, source:active?'Active loan':'Latest loan' };
 }
 function memberEligible(memberId){
   const t = Number(state.settings?.savings_threshold || 900);
@@ -938,15 +938,15 @@ const $ = id => document.getElementById(id);
  * SUBSCRIPTION LOCK SYSTEM
  * =====================================================================
  * HOW IT WORKS:
- *   - LOCK_ACTIVE = true  â†’ admin is blocked from 7am on LOCK_DATE
- *   - LOCK_ACTIVE = false â†’ system runs normally for everyone
+ *   - LOCK_ACTIVE = true  -> admin is blocked from 7am on LOCK_DATE
+ *   - LOCK_ACTIVE = false -> system runs normally for everyone
  *   - Officers (role !== 'admin') are NEVER affected regardless of flag
  *
  * TO UNLOCK: Set LOCK_ACTIVE = false and save/re-upload the file.
  *
  * FUTURE: Replace with a Supabase flag in pb_settings for remote control.
  * ===================================================================== */
-const LOCK_ACTIVE   = false;               // â† flip to false to restore admin
+const LOCK_ACTIVE   = false;               // <- flip to false to restore admin
 const LOCK_DATE     = '2026-06-03';       // ISO date the lock activates
 const LOCK_HOUR     = 7;                  // 24-h hour (7 = 7:00 AM)
 const LOCK_AMOUNT   = 'KES 3,000';
@@ -1016,7 +1016,7 @@ function renderSubscriptionLock(){
           </h2>
           <p style="margin:0 0 20px;font-size:13px;color:var(--text-muted);line-height:1.65">
             Your monthly database subscription of <strong style="color:var(--text)">${LOCK_AMOUNT}</strong>
-            is now due. All your data is safe and fully intact â€” access will be restored
+            is now due. All your data is safe and fully intact - access will be restored
             within minutes of payment confirmation.
           </p>
 
@@ -1087,7 +1087,7 @@ function renderSubscriptionLock(){
 
 function render(){
   if(!state.session){ renderAuth(); return; }
-  if(isSubscriptionLocked()){ renderSubscriptionLock(); return; } // â† lock intercept
+  if(isSubscriptionLocked()){ renderSubscriptionLock(); return; } // <- lock intercept
   renderShell();
 }
 
@@ -1281,7 +1281,7 @@ function renderAuth(){
           <button class="btn btn-outline btn-block" onclick="authMode='signin';renderAuth()">Back to sign in</button>
         `}
         <div class="muted" style="text-align:center;margin-top:18px;font-size:11px">
-          ${navigator.onLine ? 'Connected' : 'Offline mode â€” cached credentials accepted'}
+          ${navigator.onLine ? 'Connected' : 'Offline mode - cached credentials accepted'}
         </div>
         <div style="text-align:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted);letter-spacing:0.03em">
           Powered by <strong style="color:var(--text-muted)">Rudder Research and Data Analytics LTD</strong>
@@ -1415,7 +1415,7 @@ function renderShell(){
           ${admin.map(i => `<a class="${state.view===i.k?'active':''}" onclick="go('${i.k}')"><span class="icn">${i.icon}</span>${i.label}</a>`).join('')}
         </nav>
         <div class="sidebar-footer">
-          v1.0 â€¢ ${navigator.onLine ? 'Online' : 'Offline'}<br>
+          v1.0 -  ${navigator.onLine ? 'Online' : 'Offline'}<br>
           <span style="font-size:10px;opacity:0.7">Powered by Rudder Research</span>
         </div>
       </aside>
@@ -1458,7 +1458,7 @@ function pageTitle(){
     reconciliation:'Remittances', expenses:'Expenses', reports:'Reports', accounting:'Accounting',
     staff:'Staff & Permissions', settings:'Settings', audit:'Audit Log',
     memberProfile:'Member Profile'
-  })[state.view] || 'â€”';
+  })[state.view] || ' - ';
 }
 function go(view, ctx=null){ state.view = view; state.viewCtx = ctx; toggleSidebar(false); render(); }
 function toggleSidebar(force){
@@ -1514,7 +1514,7 @@ function modal({ title, body, actions=[], size='' }){
   root.innerHTML = `
     <div class="modal-back show" id="modal-back">
       <div class="modal ${size}">
-        <div class="modal-head"><h3>${title}</h3><button class="x-btn" onclick="closeModal()">Ã—</button></div>
+        <div class="modal-head"><h3>${title}</h3><button class="x-btn" onclick="closeModal()">Close</button></div>
         <div class="modal-body">${body}</div>
         ${actions.length ? `<div class="modal-foot">${actions.map((a,i)=>`<button class="btn ${a.cls||'btn-outline'}" data-act="${i}">${a.label}</button>`).join('')}</div>` : ''}
       </div>
@@ -1654,7 +1654,7 @@ function pageDashboard(){
   const eligibleCount = state.data.members.filter(m=>memberEligible(m.id)).length;
   const invValue = state.data.inventory.reduce((a,i)=>a+Number(i.loan_price||0)*Number(i.stock||0),0);
 
-  // Officer performance â€” active loan officers only
+  // Officer performance - active loan officers only
   const officers = state.data.staff.filter(s => s.role==='officer' && s.status==='active');
   const todayISO_ = todayISO();
   const officerPerf = officers.map(o => {
@@ -1701,7 +1701,7 @@ function pageDashboard(){
               ${savings.slice(0,8).map(s => {
                 const m = state.data.members.find(x=>x.id===s.member_id);
                 const g = state.data.groups.find(x=>x.id===s.group_id);
-                return `<tr><td style="white-space:nowrap">${fmtDate(s.meeting_date)}</td><td>${m?.full_name||'â€”'}</td><td>${g?.name||'â€”'}</td><td class="num">${KES(s.amount)}</td></tr>`;
+                return `<tr><td style="white-space:nowrap">${fmtDate(s.meeting_date)}</td><td>${m?.full_name||' - '}</td><td>${g?.name||' - '}</td><td class="num">${KES(s.amount)}</td></tr>`;
               }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No savings in period</h4></div></td></tr>`}
             </tbody>
           </table>
@@ -1737,7 +1737,7 @@ function pageDashboard(){
 
     ${officerPerf.length ? `
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp;Â·&nbsp; Active loans &amp; disbursed today are always current</div></div>
+      <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp; - &nbsp; Active loans &amp; disbursed today are always current</div></div>
       <div style="overflow-x:auto">
         <table class="tbl">
           <thead><tr><th>Officer</th><th class="num">Savings collected</th><th class="num">Repayments</th><th class="num">Active loans (Value)</th><th class="num">Orders today</th><th class="num">Loan Value (Period)</th></tr></thead>
@@ -1747,8 +1747,8 @@ function pageDashboard(){
               <td class="num">${KES(o.savings)}</td>
               <td class="num">${KES(o.repayments)}</td>
               <td class="num">${KES(o.loans)}</td>
-              <td class="num" style="color:${o.ordersToday>0?'var(--primary)':'inherit'}">${o.ordersToday>0?o.ordersToday:'â€”'}</td>
-              <td class="num" style="color:${o.loanValuePeriod>0?'var(--primary)':'inherit'}">${o.loanValuePeriod>0?KES(o.loanValuePeriod):'â€”'}</td>
+              <td class="num" style="color:${o.ordersToday>0?'var(--primary)':'inherit'}">${o.ordersToday>0?o.ordersToday:' - '}</td>
+              <td class="num" style="color:${o.loanValuePeriod>0?'var(--primary)':'inherit'}">${o.loanValuePeriod>0?KES(o.loanValuePeriod):' - '}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -1850,7 +1850,7 @@ function pageOfficerDashboard(){
   const totalRp = myRepay.reduce((a,b)=>a+Number(b.amount||0),0);
   const myOutstandingBal = myLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
   const myInterestEarned = myRepay.reduce((a,r)=>a+Number(r.interest||0),0);
-  // Pending (awaiting admin approval) â€” all-time for this officer, not range-filtered
+  // Pending (awaiting admin approval) - all-time for this officer, not range-filtered
   const myPendingSavings = state.data.savings.filter(s=>s.recorded_by===me.id && s.status==='pending');
   const myPendingRepayments = state.data.repayments.filter(r=>r.recorded_by===me.id && r.status==='pending');
   const myPendingSavingsTotal = myPendingSavings.reduce((a,b)=>a+Number(b.amount||0),0);
@@ -1882,7 +1882,7 @@ function pageOfficerDashboard(){
       <div class="kpi" style="border-top:3px solid var(--warning);background:var(--warning-50)">
         <div class="l" style="color:var(--warning)">Pending Admin Approval</div>
         <div class="v" style="font-size:18px">${myPendingSavings.length + myPendingRepayments.length} <span style="font-size:13px;font-weight:500;color:var(--text-muted)">entries</span></div>
-        <div class="d">${myPendingSavings.length > 0 ? `Savings: ${KES(myPendingSavingsTotal)} (${myPendingSavings.length})` : ''}${myPendingSavings.length > 0 && myPendingRepayments.length > 0 ? ' Â· ' : ''}${myPendingRepayments.length > 0 ? `Repayments: ${KES(myPendingRepaymentsTotal)} (${myPendingRepayments.length})` : ''}</div>
+        <div class="d">${myPendingSavings.length > 0 ? `Savings: ${KES(myPendingSavingsTotal)} (${myPendingSavings.length})` : ''}${myPendingSavings.length > 0 && myPendingRepayments.length > 0 ? ' - ' : ''}${myPendingRepayments.length > 0 ? `Repayments: ${KES(myPendingRepaymentsTotal)} (${myPendingRepayments.length})` : ''}</div>
       </div>` : ''}
     </div>
     <div class="card" style="margin-top:16px">
@@ -1906,9 +1906,9 @@ function pageOfficerDashboard(){
               <td><b>${g.name}</b></td>
               <td class="num">${mc}</td>
               <td class="num">${KES(groupSavingsTotal(g.id))}</td>
-              <td class="num" style="color:${savToday>0?'var(--success)':'var(--text-muted)'}"><b>${savToday>0?KES(savToday):'â€”'}</b></td>
-              <td class="num" style="color:${repToday>0?'var(--primary)':'var(--text-muted)'}"><b>${repToday>0?KES(repToday):'â€”'}</b></td>
-              <td>${g.meeting_day||'â€”'}</td>
+              <td class="num" style="color:${savToday>0?'var(--success)':'var(--text-muted)'}"><b>${savToday>0?KES(savToday):' - '}</b></td>
+              <td class="num" style="color:${repToday>0?'var(--primary)':'var(--text-muted)'}"><b>${repToday>0?KES(repToday):' - '}</b></td>
+              <td>${g.meeting_day||' - '}</td>
             </tr>`;
           }).join('') || `<tr><td colspan="6"><div class="empty" style="padding:20px 0"><h4>No groups assigned</h4></div></td></tr>`}
         </tbody>
@@ -1923,7 +1923,7 @@ function pageOfficerDashboard(){
             const mem = state.data.members.find(x=>x.id===l.member_id);
             const outstanding = Math.max(0, Number(l.total_payable||0) - loanPaid(l.id));
             return `<tr>
-              <td><b>${mem?.full_name||'â€”'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
+              <td><b>${mem?.full_name||' - '}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
               <td>${l.asset_name}</td>
               <td class="num">${KES(l.loan_value)}</td>
               <td class="num" style="color:var(--danger);font-weight:700">${KES(outstanding)}</td>
@@ -1945,7 +1945,7 @@ function pageGroups(){
 
   // Apply search filter
   const q = (state._groupSearch||'').toLowerCase();
-  // Sort groups by meeting day (Monday â†’ Sunday)
+  // Sort groups by meeting day (Monday -> Sunday)
   const dayWeight = {Monday:1,Tuesday:2,Wednesday:3,Thursday:4,Friday:5,Saturday:6,Sunday:7};
   if(q) groups = groups.filter(g =>
     (g.name||'').toLowerCase().includes(q) ||
@@ -1966,7 +1966,7 @@ function pageGroups(){
         <div class="desc">${isAdmin ? 'All chama groups.' : 'Groups assigned to you.'}</div>
       </div>
       <div class="actions">
-        ${isAdmin && groups.some(g=>!g.group_code) ? `<button class="btn btn-outline" onclick="backfillGroupCodes()">ðŸ”„ Generate missing M-Pesa codes</button>` : ''}
+        ${isAdmin && groups.some(g=>!g.group_code) ? `<button class="btn btn-outline" onclick="backfillGroupCodes()"> Generate missing M-Pesa codes</button>` : ''}
         <button class="btn btn-primary" onclick="openGroupForm()">Register group</button>
       </div>
     </div>
@@ -1990,24 +1990,24 @@ function pageGroups(){
             return `<tr>
               <td>${g.group_number}</td>
               <td><b>${g.name}</b></td>
-              <td>${g.group_code ? `<code style="font-family:monospace;font-size:12px;background:var(--surface-2);padding:2px 6px;border-radius:4px">${g.group_code}</code>` : `<span class="muted" style="font-size:11px">â€” not set â€”</span>`}</td>
-              <td>${g.meeting_day||'â€”'} ${g.meeting_time?'Â· '+g.meeting_time:''}</td>
-              <td>${g.chairman_name||'â€”'}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
-              <td>${g.treasurer_name||'â€”'}<div class="muted" style="font-size:11px">${g.treasurer_phone||''}</div></td>
-              <td>${off?.full_name||'â€”'}</td>
+              <td>${g.group_code ? `<code style="font-family:monospace;font-size:12px;background:var(--surface-2);padding:2px 6px;border-radius:4px">${g.group_code}</code>` : `<span class="muted" style="font-size:11px"> -  not set  - </span>`}</td>
+              <td>${g.meeting_day||' - '} ${g.meeting_time?' -  '+g.meeting_time:''}</td>
+              <td>${g.chairman_name||' - '}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
+              <td>${g.treasurer_name||' - '}<div class="muted" style="font-size:11px">${g.treasurer_phone||''}</div></td>
+              <td>${off?.full_name||' - '}</td>
               <td class="num">${mc}</td>
               <td class="num">${KES(groupSavingsTotal(g.id))}</td>
               <td><span class="badge ${g.status==='active'?'b-green':'b-grey'}">${g.status}</span></td>
-              <td><button class="act-btn" onclick="groupActions(event,'${g.id}')">Â·Â·Â·</button></td>
+              <td><button class="act-btn" onclick="groupActions(event,'${g.id}')"> - - - </button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No groups found</h4><p>${q ? 'No groups match your search.' : 'Create your first chama group to start onboarding members.'}</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
     ${total > PAGE_SIZE ? `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--text-muted)">
-      <button class="btn btn-sm btn-outline" ${_gPage===0?'disabled':''} onclick="state._groupsPage=${_gPage-1};pageGroups()">â† Prev</button>
+      <button class="btn btn-sm btn-outline" ${_gPage===0?'disabled':''} onclick="state._groupsPage=${_gPage-1};pageGroups()">Previous</button>
       <span>Page ${_gPage+1} of ${Math.ceil(total/PAGE_SIZE)} &nbsp;(${total} groups)</span>
-      <button class="btn btn-sm btn-outline" ${(_gPage+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._groupsPage=${_gPage+1};pageGroups()">Next â†’</button>
+      <button class="btn btn-sm btn-outline" ${(_gPage+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._groupsPage=${_gPage+1};pageGroups()">Next -></button>
     </div>` : ''}
   `;
   $('grp-search').addEventListener('input', e => {
@@ -2050,19 +2050,18 @@ function openGroupForm(g=null){
     body: `<form id="gform">
       ${g?.group_code ? `
       <div style="background:var(--success-50,#f0fdf4);border:1px solid var(--success);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;font-size:13px">
-        ðŸ’³ <b>M-Pesa Paybill Account Number:</b> <code style="font-family:monospace;font-weight:700;font-size:14px;background:var(--surface);padding:2px 8px;border-radius:4px;margin-left:4px">${g.group_code}</code>
+         <b>M-Pesa Paybill Account Number:</b> <code style="font-family:monospace;font-weight:700;font-size:14px;background:var(--surface);padding:2px 8px;border-radius:4px;margin-left:4px">${g.group_code}</code>
         <div class="muted" style="font-size:11px;margin-top:4px">
           Give this code <b>only to the chairman/treasurer</b> to use when sending the day's collected
-          total to the Paybill after the meeting. <b>Do not</b> share this code with individual members â€”
-          members should bring their savings/repayments to the meeting in person.
+          total to the Paybill after the meeting. <b>Do not</b> share this code with individual members - members should bring their savings/repayments to the meeting in person.
         </div>
       </div>` : `
       <div style="background:var(--info-50);border:1px solid var(--info);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;font-size:13px">
-        ðŸ’³ A unique M-Pesa Paybill account code will be generated automatically for this group once saved.
+         A unique M-Pesa Paybill account code will be generated automatically for this group once saved.
       </div>`}
       <div class="grid-2">
         <div class="field"><label>Group number</label><input type="number" name="group_number" value="${g?.group_number ?? (state.data.groups.length+1)}" required min="1" /></div>
-        <div class="field"><label>Group name</label><input name="name" value="${g?.name||''}" required placeholder="e.g. Group 1 â€” Kawangware" /></div>
+        <div class="field"><label>Group name</label><input name="name" value="${g?.name||''}" required placeholder="e.g. Group 1 - Kawangware" /></div>
       </div>
       <div class="grid-2">
         <div class="field"><label>Meeting day</label>
@@ -2083,7 +2082,7 @@ function openGroupForm(g=null){
       </div>
       <div class="field"><label>Assigned loan officer</label>
         <select name="officer_id">
-          <option value="">â€” Unassigned â€”</option>
+          <option value=""> -  Unassigned  - </option>
           ${officers.map(o => `<option value="${o.id}" ${g?.officer_id===o.id?'selected':''}>${o.full_name}</option>`).join('')}
         </select>
       </div>
@@ -2111,7 +2110,7 @@ function openGroupForm(g=null){
         } else {
           // Every new group automatically gets a unique M-Pesa account code
           row.group_code = generateGroupCode();
-          const { data, error } = await sb.from('pb_groups').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
+          const { data, error } = await sb.from('pb_groups').insert({...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.groups.unshift(data); audit('create','pb_groups',data.id,null,data);
         }
@@ -2152,7 +2151,7 @@ function pageMembers(){
         <input id="mem-search" placeholder="Search by name, ID or phone" value="${state._memberSearch||''}"/>
       </div>
       <div style="position:relative;min-width:220px">
-        <input id="mem-group-search" type="text" placeholder="ðŸ” Filter by group nameâ€¦"
+        <input id="mem-group-search" type="text" placeholder=" Filter by group name..."
           value="${filterGroup ? (state.data.groups.find(g=>g.id===filterGroup)?.name||'') : ''}"
           autocomplete="off"
           style="width:100%;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
@@ -2174,20 +2173,20 @@ function pageMembers(){
             return `<tr style="cursor:pointer" onclick="state._memberProfileTab='overview'; go('memberProfile', {memberId: '${m.id}'})">
               <td><b>${m.full_name}</b><div class="muted" style="font-size:11px">${m.phone||''}</div></td>
               <td>${m.national_id}</td>
-              <td>${g?.name||'â€”'}</td>
+              <td>${g?.name||' - '}</td>
               <td class="num">${KES(sv)}</td>
               <td>${elig?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Not yet</span>'}</td>
               <td>${ln?'<span class="badge b-blue">Active</span>':'<span class="badge b-grey">None</span>'}</td>
-              <td onclick="event.stopPropagation()"><button class="act-btn" onclick="memberActions(event,'${m.id}')">Â·Â·Â·</button></td>
+              <td onclick="event.stopPropagation()"><button class="act-btn" onclick="memberActions(event,'${m.id}')"> - - - </button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="7"><div class="empty"><h4>No members found</h4><p>Register a member to one of your active groups.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
     ${total > PAGE_SIZE ? `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--text-muted)">
-      <button class="btn btn-sm btn-outline" ${_page===0?'disabled':''} onclick="state._membersPage=${_page-1};pageMembers()">â† Prev</button>
+      <button class="btn btn-sm btn-outline" ${_page===0?'disabled':''} onclick="state._membersPage=${_page-1};pageMembers()">Previous</button>
       <span>Page ${_page+1} of ${Math.ceil(total/PAGE_SIZE)} &nbsp;(${total} members)</span>
-      <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._membersPage=${_page+1};pageMembers()">Next â†’</button>
+      <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._membersPage=${_page+1};pageMembers()">Next -></button>
     </div>` : ''}
   `;
   $('mem-search').addEventListener('input', e => { state._memberSearch = e.target.value; state._membersPage=0; pageMembers(); setTimeout(()=>{ const el=$('mem-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },0); });
@@ -2200,10 +2199,9 @@ function pageMembers(){
     const matches = memberGroupList.filter(g=>!q||g.name.toLowerCase().includes(q.toLowerCase()));
     memGrpDrop.innerHTML = [
       `<div style="padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text-muted)"
-        onmousedown="state.viewCtx={groupId:''};state._membersPage=0;pageMembers()">All groups</div>`,
-      ...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
+        onmousedown="state.viewCtx={groupId:''};state._membersPage=0;pageMembers()">All groups</div>`,...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
         onmousedown="state.viewCtx={groupId:'${g.id}'};state._membersPage=0;pageMembers()">${g.name}
-        <span style="font-size:10px;color:var(--text-muted);margin-left:6px">${g.meeting_day||''} ${g.group_code?'Â· '+g.group_code:''}</span></div>`)
+        <span style="font-size:10px;color:var(--text-muted);margin-left:6px">${g.meeting_day||''} ${g.group_code?' -  '+g.group_code:''}</span></div>`)
     ].join('');
     memGrpDrop.style.display = 'block';
   };
@@ -2227,14 +2225,13 @@ function memberActions(ev, id){
   );
   const isDuplicate = duplicates.length > 0;
   const dupNote = isDuplicate
-    ? `âš ï¸ This record shares ${duplicates[0].national_id === m.national_id ? 'a National ID' : 'the same name and phone'} with <b>${duplicates[0].full_name}</b> (ID: ${duplicates[0].national_id||'â€”'}).`
-    : 'No automatic duplicate detected â€” proceed only if you are certain this is an erroneous entry.';
+    ? `Warning:  This record shares ${duplicates[0].national_id === m.national_id ? 'a National ID' : 'the same name and phone'} with <b>${duplicates[0].full_name}</b> (ID: ${duplicates[0].national_id||' - '}).`
+    : 'No automatic duplicate detected - proceed only if you are certain this is an erroneous entry.';
 
   showActMenu(ev, [
     { label:'View profile', onClick: ()=>{ go('memberProfile', { memberId: id }); } },
     { label:'Edit details', onClick: ()=>openMemberEdit(m) },
-    'sep',
-    ...(isAdmin ? [
+    'sep',...(isAdmin ? [
       { label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(
         `Deactivate "${m.full_name}"? They will no longer appear in active member lists.`,
         async()=>{
@@ -2244,7 +2241,7 @@ function memberActions(ev, id){
         }, { title:'Deactivate member', danger:true })
       },
       {
-        label: isDuplicate ? 'ðŸ—‘ Delete Duplicate Member' : 'ðŸ—‘ Delete Member',
+        label: isDuplicate ? ' Delete Duplicate Member' : ' Delete Member',
         danger: true,
         onClick: () => confirmDialog(
           `<b>Permanently delete "${m.full_name}"?</b><br><br>${dupNote}<br><br>` +
@@ -2294,9 +2291,7 @@ function renderWizard(){
       </div>
       <div id="wiz-body">${renderWizardStep()}</div>
     `,
-    actions:[
-      ...(s>1 ? [{ label:'Back', onClick: ()=>{ saveWizardStep(); state._wizardStep--; renderWizard(); } }] : [{ label:'Cancel', onClick: closeModal }]),
-      ...(s<4 ? [{ label:'Continue', cls:'btn-primary', onClick: ()=>{ if(saveWizardStep()){ state._wizardStep++; renderWizard(); } } }] :
+    actions:[...(s>1 ? [{ label:'Back', onClick: ()=>{ saveWizardStep(); state._wizardStep--; renderWizard(); } }] : [{ label:'Cancel', onClick: closeModal }]),...(s<4 ? [{ label:'Continue', cls:'btn-primary', onClick: ()=>{ if(saveWizardStep()){ state._wizardStep++; renderWizard(); } } }] :
               [{ label:'Confirm registration', cls:'btn-primary', onClick: submitWizard }])
     ]
   });
@@ -2331,16 +2326,16 @@ function renderWizardStep(){
       <div class="grid-2">
         <div class="field"><label>Select group *</label>
           <select id="w-group_id" required>
-            <option value="">â€” Select â€”</option>
+            <option value=""> -  Select  - </option>
             ${availableGroups.map(x=>`<option value="${x.id}" ${d.group_id===x.id?'selected':''}>${x.name}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label>Meeting day (from group)</label><input id="w-meeting_day" disabled value="${g?.meeting_day||'â€” select group â€”'}" /></div>
+        <div class="field"><label>Meeting day (from group)</label><input id="w-meeting_day" disabled value="${g?.meeting_day||' -  select group  - '}" /></div>
         <div class="field"><label>Registration fee (KES)</label><input id="w-registration_fee" type="number" min="0" value="${d.registration_fee}" /></div>
         <div class="field"><label>Date of registration</label><input id="w-registered_on" type="date" value="${d.registered_on}" /></div>
         <div class="field"><label>Assigned loan officer</label>
           <select id="w-officer_id">
-            <option value="">â€” Auto from group â€”</option>
+            <option value=""> -  Auto from group  - </option>
             ${state.data.staff.filter(s=>s.role==='officer' && s.status==='active').map(s=>`<option value="${s.id}" ${d.officer_id===s.id?'selected':''}>${s.full_name}</option>`).join('')}
           </select>
         </div>
@@ -2383,17 +2378,17 @@ function renderWizardStep(){
       <tr><td>Date of birth</td><td>${fmtDate(d.date_of_birth)}</td></tr>
       <tr><td>Gender</td><td>${d.gender}</td></tr>
       <tr><td>Phone</td><td>${d.phone}</td></tr>
-      <tr><td>Email</td><td>${d.email||'â€”'}</td></tr>
-      <tr><td>Address</td><td>${d.address||'â€”'}</td></tr>
-      <tr><td>Occupation</td><td>${d.occupation||'â€”'}${d.employer?' Â· '+d.employer:''}</td></tr>
-      <tr><td>Income estimate</td><td>${d.income_estimate ? KES(d.income_estimate) : 'â€”'}</td></tr>
+      <tr><td>Email</td><td>${d.email||' - '}</td></tr>
+      <tr><td>Address</td><td>${d.address||' - '}</td></tr>
+      <tr><td>Occupation</td><td>${d.occupation||' - '}${d.employer?' - '+d.employer:''}</td></tr>
+      <tr><td>Income estimate</td><td>${d.income_estimate ? KES(d.income_estimate) : ' - '}</td></tr>
       <tr><td colspan="2"><h5>Group assignment</h5></td></tr>
-      <tr><td>Group</td><td>${g?.name||'â€”'}</td></tr>
-      <tr><td>Meeting day</td><td>${g?.meeting_day||'â€”'}</td></tr>
-      <tr><td>Loan officer</td><td>${off?.full_name||'â€”'}</td></tr>
+      <tr><td>Group</td><td>${g?.name||' - '}</td></tr>
+      <tr><td>Meeting day</td><td>${g?.meeting_day||' - '}</td></tr>
+      <tr><td>Loan officer</td><td>${off?.full_name||' - '}</td></tr>
       <tr><td>Date of registration</td><td>${fmtDate(d.registered_on)}</td></tr>
       <tr><td colspan="2"><h5>Guarantors</h5></td></tr>
-      ${d.guarantors.map((gn,i)=>`<tr><td>Guarantor ${i+1}</td><td>${gn.full_name} Â· ${gn.national_id} Â· ${gn.phone}${gn.relationship?' Â· '+gn.relationship:''}</td></tr>`).join('')}
+      ${d.guarantors.map((gn,i)=>`<tr><td>Guarantor ${i+1}</td><td>${gn.full_name} - ${gn.national_id} - ${gn.phone}${gn.relationship?' - '+gn.relationship:''}</td></tr>`).join('')}
       <tr><td colspan="2"><h5>Fee</h5></td></tr>
       <tr><td>Registration fee</td><td><b>${KES(d.registration_fee)}</b></td></tr>
     </table>
@@ -2527,7 +2522,7 @@ function openMemberEdit(m){
 }
 
 /* =====================================================================
- * MEMBER PROFILE â€” TAB ACTION HELPERS
+ * MEMBER PROFILE - TAB ACTION HELPERS
  * (named functions avoid syntax errors from deeply-nested inline onclick)
  * ===================================================================== */
 function mpApproveSaving(id){
@@ -2551,14 +2546,14 @@ async function mpDeleteSaving(id){
 function mpSavingMenu(ev, id, isPending){
   const isAdmin = state.staff.role==='admin';
   const isOfficer = state.staff.role==='officer';
-  const items = [{ label:'âœ Edit Entry', onClick:()=>openEditSaving(id) }];
+  const items = [{ label:'Edit  Edit Entry', onClick:()=>openEditSaving(id) }];
   if(isPending && isAdmin){
     items.push('sep');
-    items.push({ label:'âœ“ Approve', onClick:()=>mpApproveSaving(id) });
+    items.push({ label:' Approve', onClick:()=>mpApproveSaving(id) });
   }
   if(isAdmin || isOfficer){
     items.push('sep');
-    items.push({ label:'ðŸ—‘ Delete entry', danger:true, onClick:()=>mpDeleteSaving(id) });
+    items.push({ label:' Delete entry', danger:true, onClick:()=>mpDeleteSaving(id) });
   }
   showActMenu(ev, items);
 }
@@ -2584,14 +2579,14 @@ async function mpDeleteRepayment(id){
 function mpRepaymentMenu(ev, id, isPending){
   const isAdmin = state.staff.role==='admin';
   const isOfficer = state.staff.role==='officer';
-  const items = [{ label:'âœ Edit Entry', onClick:()=>openEditRepayment(id) }];
+  const items = [{ label:'Edit  Edit Entry', onClick:()=>openEditRepayment(id) }];
   if(isPending && isAdmin){
     items.push('sep');
-    items.push({ label:'âœ“ Approve', onClick:()=>mpApproveRepayment(id) });
+    items.push({ label:' Approve', onClick:()=>mpApproveRepayment(id) });
   }
   if(isAdmin || isOfficer){
     items.push('sep');
-    items.push({ label:'ðŸ—‘ Delete entry', danger:true, onClick:()=>mpDeleteRepayment(id) });
+    items.push({ label:' Delete entry', danger:true, onClick:()=>mpDeleteRepayment(id) });
   }
   showActMenu(ev, items);
 }
@@ -2626,9 +2621,9 @@ function pageMemberProfile(){
   $('page').innerHTML = `
     <div class="page-head">
       <div>
-        <button class="btn btn-ghost" onclick="go('members')">â† Back to members</button>
+        <button class="btn btn-ghost" onclick="go('members')"><- Back to members</button>
         <h1 style="margin-top:6px">${m.full_name}</h1>
-        <div class="desc">${g?.name||'â€”'} Â· ID ${m.national_id} Â· ${m.phone||''}</div>
+        <div class="desc">${g?.name||' - '} - ID ${m.national_id} - ${m.phone||''}</div>
       </div>
       <div class="actions">
         <button class="btn btn-outline" onclick="openMemberEdit(state.data.members.find(x=>x.id==='${m.id}'))">Edit details</button>
@@ -2637,9 +2632,9 @@ function pageMemberProfile(){
 
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
       <div class="kpi k-success"><div class="l">Total savings</div><div class="v">${KES(totalSv)}</div><div class="d">${memberEligible(m.id)?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Below threshold</span>'}${sv.filter(s=>s.status==='pending').length>0?`<span class="badge b-yellow" style="margin-left:4px">${sv.filter(s=>s.status==='pending').length} pending</span>`:''}</div></div>
-      <div class="kpi k-primary"><div class="l">Active loan</div><div class="v">${ln?KES(ln.loan_value):'â€”'}</div><div class="d">${ln?'Outstanding '+KES(Number(ln.total_payable)-loanPaid(ln.id)):'No active loan'}</div></div>
-      <div class="kpi"><div class="l">Total repaid</div><div class="v">${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}</div><div class="d">${repayments.filter(r=>r.status!=='pending').length} approved entries${repayments.filter(r=>r.status==='pending').length>0?` Â· <span style="color:var(--warning)">${repayments.filter(r=>r.status==='pending').length} pending</span>`:''}</div></div>
-      <div class="kpi"><div class="l">Client performance rating</div><div class="v" style="font-size:18px">${perf.score===null?'Ã¢â‚¬â€':perf.score+'%'}</div><div class="d"><span class="badge ${perf.badgeClass}">${perf.label}</span> <span class="muted">${perf.source}</span></div></div>
+      <div class="kpi k-primary"><div class="l">Active loan</div><div class="v">${ln?KES(ln.loan_value):' - '}</div><div class="d">${ln?'Outstanding '+KES(Number(ln.total_payable)-loanPaid(ln.id)):'No active loan'}</div></div>
+      <div class="kpi"><div class="l">Total repaid</div><div class="v">${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}</div><div class="d">${repayments.filter(r=>r.status!=='pending').length} approved entries${repayments.filter(r=>r.status==='pending').length>0?` - <span style="color:var(--warning)">${repayments.filter(r=>r.status==='pending').length} pending</span>`:''}</div></div>
+      <div class="kpi"><div class="l">Client performance rating</div><div class="v" style="font-size:18px">${perf.score===null?'No score':perf.score+'%'}</div><div class="d"><span class="badge ${perf.badgeClass}">${perf.label}</span> <span class="muted">${perf.source}</span></div></div>
       <div class="kpi"><div class="l">Loan history check</div><div class="v" style="font-size:15px"><span class="badge ${risk.badgeClass}">${risk.label}</span></div><div class="d">${risk.summary}</div></div>
       <div class="kpi k-warn"><div class="l">Member since</div><div class="v" style="font-size:16px">${fmtDate(m.registered_on)}</div></div>
     </div>
@@ -2670,15 +2665,15 @@ function pageMemberProfile(){
               ${[
                 ['Full name', m.full_name],
                 ['National ID', m.national_id],
-                ['Date of birth', m.date_of_birth ? fmtDate(m.date_of_birth) : 'â€”'],
-                ['Gender', m.gender||'â€”'],
-                ['Phone', m.phone||'â€”'],
-                ['Email', m.email||'â€”'],
-                ['Address', m.address||'â€”'],
-                ['Nearest town', m.nearest_town||'â€”'],
-                ['Occupation', m.occupation||'â€”'],
-                ['Employer', m.employer||'â€”'],
-                ['Income estimate', m.income_estimate ? KES(m.income_estimate) : 'â€”'],
+                ['Date of birth', m.date_of_birth ? fmtDate(m.date_of_birth) : ' - '],
+                ['Gender', m.gender||' - '],
+                ['Phone', m.phone||' - '],
+                ['Email', m.email||' - '],
+                ['Address', m.address||' - '],
+                ['Nearest town', m.nearest_town||' - '],
+                ['Occupation', m.occupation||' - '],
+                ['Employer', m.employer||' - '],
+                ['Income estimate', m.income_estimate ? KES(m.income_estimate) : ' - '],
                 ['Status', `<span class="badge ${m.status==='active'?'b-green':'b-grey'}">${m.status}</span>`],
               ].map(([l,v])=>`<tr><td style="padding:5px 0;color:var(--text-muted);width:44%">${l}</td><td style="padding:5px 0;font-weight:500">${v}</td></tr>`).join('')}
             </table>
@@ -2687,8 +2682,8 @@ function pageMemberProfile(){
             <h3 style="margin:0 0 12px">Guarantors</h3>
             ${guars.length ? guars.map(gn=>`
               <div style="padding:10px 0;border-bottom:1px solid var(--border)">
-                <div style="font-weight:600">${gn.full_name} <span class="muted" style="font-weight:400;font-size:12px">Â· ${gn.relationship||'â€”'}</span></div>
-                <div class="muted" style="font-size:12px">ID ${gn.national_id} Â· ${gn.phone} Â· ${gn.location||''}</div>
+                <div style="font-weight:600">${gn.full_name} <span class="muted" style="font-weight:400;font-size:12px"> -  ${gn.relationship||' - '}</span></div>
+                <div class="muted" style="font-size:12px">ID ${gn.national_id} - ${gn.phone} - ${gn.location||''}</div>
               </div>`).join('') : '<p class="muted">No guarantors recorded.</p>'}
           </div>
         </div>
@@ -2719,16 +2714,16 @@ function pageMemberProfile(){
             const officer = state.data.staff.find(x=>x.id===s.recorded_by);
             return `<tr${isPending?' style="background:var(--warning-50)"':''}>
               <td>${fmtDate(s.meeting_date)}</td>
-              <td class="num">${KES(s.amount)}${s.edit_notes?'<span title="Edited" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">âœŽ</span>':''}</td>
-              <td class="num" style="color:${isPending?'var(--text-muted)':'var(--success)'}">${isPending?'â€”':KES(running)}</td>
+              <td class="num">${KES(s.amount)}${s.edit_notes?'<span title="Edited" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">edited</span>':''}</td>
+              <td class="num" style="color:${isPending?'var(--text-muted)':'var(--success)'}">${isPending?' - ':KES(running)}</td>
               <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
-              <td>${officer?.full_name||'â€”'}</td>
-              ${canEdit?`<td><button class="act-btn" onclick="mpSavingMenu(event,'${s.id}',${isPending})">Â·Â·Â·</button></td>`:''}
+              <td>${officer?.full_name||' - '}</td>
+              ${canEdit?`<td><button class="act-btn" onclick="mpSavingMenu(event,'${s.id}',${isPending})"> - - - </button></td>`:''}
             </tr>`;
           }).reverse().join('');
           return `
         <div class="card">
-          <div class="card-head"><h3>Savings history</h3><div class="sub">Approved total: ${KES(totalSv)}${sv.filter(s=>s.status==='pending').length>0?` Â· <span style="color:var(--warning);font-weight:600">${sv.filter(s=>s.status==='pending').length} pending approval</span>`:''}</div></div>
+          <div class="card-head"><h3>Savings history</h3><div class="sub">Approved total: ${KES(totalSv)}${sv.filter(s=>s.status==='pending').length>0?` - <span style="color:var(--warning);font-weight:600">${sv.filter(s=>s.status==='pending').length} pending approval</span>`:''}</div></div>
           <div style="display:flex;gap:5px;flex-wrap:wrap;padding:10px 16px 0;align-items:center">
             ${mpSvFilterBtns.map(([k,l])=>`<button class="btn btn-sm ${_mpSavingsFilter===k?'btn-primary':'btn-outline'}" onclick="_mpSavingsFilter='${k}';pageMemberProfile()">${l}</button>`).join('')}
             ${_mpSavingsFilter==='custom'?`
@@ -2756,7 +2751,7 @@ function pageMemberProfile(){
           const today = todayISO();
           return `<div class="card" style="margin-bottom:14px">
             <div class="card-head">
-              <h3>${l.asset_name} ${l.asset_quantity>1?'Ã— '+l.asset_quantity:''}</h3>
+              <h3>${l.asset_name} ${l.asset_quantity>1?'x '+l.asset_quantity:''}</h3>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
                 <span class="badge ${loanPerf.badgeClass}">${loanPerf.label} ${loanPerf.score}%</span>
                 <span class="badge ${l.status==='active'?'b-blue':'b-grey'}">${l.status}</span>
@@ -2815,8 +2810,8 @@ function pageMemberProfile(){
           <div class="card-head">
             <h3>Repayment history</h3>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <div class="sub">Approved total: ${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}${repayments.filter(r=>r.status==='pending').length>0?` Â· <span style="color:var(--warning);font-weight:600">${repayments.filter(r=>r.status==='pending').length} pending approval</span>`:''}</div>
-              ${ln ? `<button class="btn btn-sm btn-primary" onclick="openStandaloneRepayment('${ln.id}','${m.id}')">ðŸ“¥ Record Repayment</button>` : ''}
+              <div class="sub">Approved total: ${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}${repayments.filter(r=>r.status==='pending').length>0?` - <span style="color:var(--warning);font-weight:600">${repayments.filter(r=>r.status==='pending').length} pending approval</span>`:''}</div>
+              ${ln ? `<button class="btn btn-sm btn-primary" onclick="openStandaloneRepayment('${ln.id}','${m.id}')"> Record Repayment</button>` : ''}
             </div>
           </div>
           <div style="overflow-x:auto"><table class="tbl">
@@ -2828,12 +2823,12 @@ function pageMemberProfile(){
                 const isPending = r.status === 'pending';
                 return `<tr${isPending?' style="background:var(--warning-50)"':''}>
                   <td>${fmtDate(r.meeting_date)}</td>
-                  <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?'<span title="Edited" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">âœŽ</span>':''}</td>
+                  <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?'<span title="Edited" style="margin-left:4px;font-size:10px;color:var(--warning);cursor:help">edited</span>':''}</td>
                   <td class="num">${KES(r.principal)}</td>
                   <td class="num">${KES(r.interest)}</td>
                   <td>${isPending?'<span class="badge b-yellow">Pending Admin Approval</span>':'<span class="badge b-green">Approved</span>'}</td>
-                  <td>${officer?.full_name||'â€”'}</td>
-                  ${canEdit?`<td><button class="act-btn" onclick="mpRepaymentMenu(event,'${r.id}',${isPending})">Â·Â·Â·</button></td>`:''}
+                  <td>${officer?.full_name||' - '}</td>
+                  ${canEdit?`<td><button class="act-btn" onclick="mpRepaymentMenu(event,'${r.id}',${isPending})"> - - - </button></td>`:''}
                 </tr>`;
               }).join('') || `<tr><td colspan="${(state.staff.role==='admin'||state.staff.role==='officer')?7:6}"><div class="empty"><h4>No repayments yet</h4></div></td></tr>`}
             </tbody>
@@ -2852,7 +2847,7 @@ function pageMemberProfile(){
                 <td>${o.asset_name}</td>
                 <td class="num">${o.quantity}</td>
                 <td><span class="badge ${o.status==='fulfilled'?'b-green':o.status==='pending'?'b-yellow':'b-grey'}">${o.status}</span></td>
-                <td class="muted" style="font-size:12px">${o.notes||'â€”'}</td>
+                <td class="muted" style="font-size:12px">${o.notes||' - '}</td>
               </tr>`).join('') || `<tr><td colspan="5"><div class="empty"><h4>No orders yet</h4></div></td></tr>`}
             </tbody>
           </table></div>
@@ -2880,7 +2875,7 @@ function pageMeeting(){
   const todayDow = new Date().toLocaleDateString('en-US',{weekday:'long'}); // e.g. "Wednesday"
   const todayIdx = dayOrder.indexOf(todayDow);
   // Rotate the order so today's day comes first, then future days, then past days
-  const rotated = [...dayOrder.slice(todayIdx), ...dayOrder.slice(0, todayIdx)];
+  const rotated = [...dayOrder.slice(todayIdx),...dayOrder.slice(0, todayIdx)];
   const dayWeight = Object.fromEntries(rotated.map((d,i)=>[d,i]));
 
   const allMyGroups = isAdmin ? state.data.groups : state.data.groups.filter(g=>g.officer_id === state.staff.id);
@@ -2898,13 +2893,13 @@ function pageMeeting(){
         <div class="field">
           <label>Group</label>
           <div style="position:relative">
-            <input id="meet-grp-search" type="text" placeholder="ðŸ” Search group nameâ€¦"
-              value="${selectedGroup ? selectedGroup.name + ' Â· ' + (selectedGroup.meeting_day||'') : ''}"
+            <input id="meet-grp-search" type="text" placeholder="Search group name..."
+              value="${selectedGroup ? selectedGroup.name + ' - ' + (selectedGroup.meeting_day||'') : ''}"
               autocomplete="off"
               style="width:100%;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
             <div id="meet-grp-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:99;max-height:260px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.14)"></div>
           </div>
-          ${selectedGroup ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">ðŸ“… Meets: <b>${selectedGroup.meeting_day||'â€”'}</b>${selectedGroup.meeting_time?' at '+selectedGroup.meeting_time:''} Â· Code: <b>${selectedGroup.group_code||'â€”'}</b></div>` : ''}
+          ${selectedGroup ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px"> Meets: <b>${selectedGroup.meeting_day||' - '}</b>${selectedGroup.meeting_time?' at '+selectedGroup.meeting_time:''} - Code: <b>${selectedGroup.group_code||' - '}</b></div>` : ''}
         </div>
         <div class="field"><label>Meeting date</label><input id="m-date" type="date" value="${m.date}" /></div>
       </div>
@@ -2916,7 +2911,7 @@ function pageMeeting(){
   // Wire up meeting date
   $('m-date').addEventListener('change', e => { m.date = e.target.value; });
 
-  // Group live search â€” sorted chronologically (already sorted in myGroups)
+  // Group live search - sorted chronologically (already sorted in myGroups)
   const meetGrpSearch = $('meet-grp-search');
   const meetGrpDrop = $('meet-grp-drop');
   const showMeetGrpDrop = (q) => {
@@ -2928,18 +2923,18 @@ function pageMeeting(){
         onmousedown="
           state._meet.groupId='${g.id}';
           state._meet.entries={};
-          document.getElementById('meet-grp-search').value='${g.name.replace(/'/g,"\\'")} Â· ${g.meeting_day||''}';
+          document.getElementById('meet-grp-search').value='${g.name.replace(/'/g,"\\'")} - ${g.meeting_day||''}';
           document.getElementById('meet-grp-drop').style.display='none';
           renderMeetList();
         ">
         <div style="font-weight:600;font-size:13px">${g.name} ${isToday?'<span style="font-size:10px;background:var(--success);color:#fff;padding:1px 6px;border-radius:99px;margin-left:4px">TODAY</span>':''}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">ðŸ“… ${g.meeting_day||'â€”'}${g.meeting_time?' at '+g.meeting_time:''} &nbsp;Â·&nbsp; Code: <b>${g.group_code||'â€”'}</b></div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px"> ${g.meeting_day||' - '}${g.meeting_time?' at '+g.meeting_time:''} &nbsp; - &nbsp; Code: <b>${g.group_code||' - '}</b></div>
       </div>`;
     }).join('') : `<div style="padding:10px 14px;font-size:12px;color:var(--text-muted)">No groups found</div>`;
     meetGrpDrop.style.display = 'block';
   };
 
-  meetGrpSearch.addEventListener('focus', () => showMeetGrpDrop(meetGrpSearch.value.split('Â·')[0].trim()));
+  meetGrpSearch.addEventListener('focus', () => showMeetGrpDrop(meetGrpSearch.value.split(' - ')[0].trim()));
   meetGrpSearch.addEventListener('input', () => showMeetGrpDrop(meetGrpSearch.value));
   meetGrpSearch.addEventListener('blur', () => setTimeout(()=>{ meetGrpDrop.style.display='none'; },250));
 
@@ -2958,8 +2953,8 @@ function renderMeetList(){
   host.innerHTML = `
     <div class="card">
       <div class="card-head" style="flex-wrap:wrap;gap:8px">
-        <h3 style="margin:0">${members.length} members â€” ${m.date}</h3>
-        <button class="btn btn-primary" onclick="submitMeeting()">âœ“ Submit meeting</button>
+        <h3 style="margin:0">${members.length} members - ${m.date}</h3>
+        <button class="btn btn-primary" onclick="submitMeeting()"> Submit meeting</button>
       </div>
       <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
         <table class="tbl" style="min-width:700px;font-size:13px">
@@ -3001,7 +2996,7 @@ function renderMeetList(){
               return `<tr id="mrow-${mem.id}" ${ent.absent ? 'style="opacity:0.45"' : ''}>
                 <td style="position:sticky;left:0;background:var(--surface);z-index:1">
                   <div style="font-weight:600;font-size:12px;line-height:1.3">${mem.full_name}</div>
-                  <div style="font-size:10px;color:var(--text-muted);margin-top:1px">Sav: ${KES(sv)}${lns.length?` Â· ${lns.length} loan(s)`:''}</div>
+                  <div style="font-size:10px;color:var(--text-muted);margin-top:1px">Sav: ${KES(sv)}${lns.length?` - ${lns.length} loan(s)`:''}</div>
                 </td>
                 <td>
                   <input type="number" min="0" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-f="savings"
@@ -3012,7 +3007,7 @@ function renderMeetList(){
                     const out = Math.max(0, Number(ln.total_payable) - loanPaid(ln.id));
                     const expectedNow = loanExpectedCollectionAsOf(ln, m.date);
                     return `<div style="margin-bottom:4px">
-                      <div style="font-size:10px;color:var(--text-muted);margin-bottom:1px;white-space:nowrap">${ln.asset_name} Â· bal:${KES(out)}${depBalance>0?' · deposit first':` · due:${KES(expectedNow)}`}</div>
+                      <div style="font-size:10px;color:var(--text-muted);margin-bottom:1px;white-space:nowrap">${ln.asset_name} - bal:${KES(out)}${depBalance>0?' - deposit first':` - due:${KES(expectedNow)}`}</div>
                       <input type="number" min="0" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-loanid="${ln.id}"
                         value="${ent.repayments[ln.id]||''}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
                     </div>`;
@@ -3023,12 +3018,12 @@ function renderMeetList(){
                   <input type="number" min="0" max="${regBalance}" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-f="reg_installment"
                     value="${ent.reg_installment}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
                   <div style="font-size:10px;color:var(--warning);margin-top:1px;white-space:nowrap">Bal: ${KES(regBalance)}</div>
-                  ` : `<div style="font-size:11px;color:var(--success);text-align:center">âœ“ Done</div>`}
+                  ` : `<div style="font-size:11px;color:var(--success);text-align:center"> Done</div>`}
                 </td>
                 <td>
                   <input type="number" min="0" inputmode="numeric" class="meet-input" data-id="${mem.id}" data-f="deposit"
                     value="${ent.deposit}" ${dis} style="width:100%;text-align:right;padding:6px 4px;font-size:14px" placeholder="0" />
-                  ${depRequiredAmt > 0 ? `<div style="font-size:10px;color:${depBalance>0?'var(--warning)':'var(--success)'};margin-top:1px;white-space:nowrap">Bal: ${KES(depBalance)} · paid ${KES(depPaidAmt)}</div>` : depPaidAmt > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:1px;white-space:nowrap">So far: ${KES(depPaidAmt)}</div>` : ''}
+                  ${depRequiredAmt > 0 ? `<div style="font-size:10px;color:${depBalance>0?'var(--warning)':'var(--success)'};margin-top:1px;white-space:nowrap">Bal: ${KES(depBalance)} - paid ${KES(depPaidAmt)}</div>` : depPaidAmt > 0 ? `<div style="font-size:10px;color:var(--text-muted);margin-top:1px;white-space:nowrap">So far: ${KES(depPaidAmt)}</div>` : ''}
                 </td>
                 <td style="text-align:center;vertical-align:middle">
                   <input type="checkbox" class="meet-input" data-id="${mem.id}" data-f="absent"
@@ -3040,7 +3035,7 @@ function renderMeetList(){
         </table>
       </div>
       <div style="padding:10px 14px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border)">
-        ðŸ’¡ Tip: Scroll right to see all columns. Tap a number field and use your keypad to enter amounts.
+        Tip:  Tip: Scroll right to see all columns. Tap a number field and use your keypad to enter amounts.
       </div>
     </div>
   `;
@@ -3127,11 +3122,11 @@ async function submitMeeting(){
   let okSav=0, okRep=0, fail=0;
   for(const r of savRows){
     const res = await queuedInsert('pb_savings', r);
-    if(res.ok){ okSav++; if(!res.queued) state.data.savings.unshift({ ...r, id:'tmp_'+Math.random() }); } else fail++;
+    if(res.ok){ okSav++; if(!res.queued) state.data.savings.unshift({...r, id:'tmp_'+Math.random() }); } else fail++;
   }
   for(const r of repRows){
     const res = await queuedInsert('pb_repayments', r);
-    if(res.ok){ okRep++; if(!res.queued) state.data.repayments.unshift({ ...r, id:'tmp_'+Math.random() }); } else fail++;
+    if(res.ok){ okRep++; if(!res.queued) state.data.repayments.unshift({...r, id:'tmp_'+Math.random() }); } else fail++;
   }
   audit('meeting_submit', 'pb_meetings', meetingId, null, { savings: okSav, repayments: okRep });
 
@@ -3151,7 +3146,7 @@ async function submitMeeting(){
   if(regCount) parts.push(`${regCount} reg. installment(s)`);
   if(depCount) parts.push(`${depCount} deposit(s)`);
   if(okRep) parts.push(`${okRep} repayment(s)`);
-  toast(`Meeting saved â€” ${parts.join(', ')}.${fail?' Failed: '+fail:''}`, fail?'warn':'success');
+  toast(`Meeting saved - ${parts.join(', ')}.${fail?' Failed: '+fail:''}`, fail?'warn':'success');
   state._meet = { groupId:'', date: todayISO(), entries:{} };
   render();
 }
@@ -3203,7 +3198,7 @@ function pageArrears(){
   const grpFilter = state._arrearsGroupFilter || '';
 
   // Strict separation: each bucket is mutually exclusive
-  // arrears:     paid < expected (overdue) â€” regardless of next due date
+  // arrears:     paid < expected (overdue) - regardless of next due date
   // duetoday:    arrears === 0 AND next installment is exactly today
   // duethisweek: arrears === 0 AND next installment is within next 7 days (but not today)
   const arrearsLoans     = report.filter(r => r.arrears > 0);
@@ -3241,7 +3236,7 @@ function pageArrears(){
         <div class="desc">Track missed payments and upcoming collections.</div>
       </div>
       <div class="actions">
-        <button class="btn btn-outline btn-sm" onclick="openCollectionSheetModal()" title="Export today's collection sheet">ðŸ“‹ Collection Sheet</button>
+        <button class="btn btn-outline btn-sm" onclick="openCollectionSheetModal()" title="Export today's collection sheet"> Collection Sheet</button>
       </div>
     </div>
 
@@ -3258,13 +3253,13 @@ function pageArrears(){
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;align-items:flex-end">
       <div class="tabs" style="margin-bottom:0;border-bottom:none">
         <button class="${tab==='arrears'?'active':''}" onclick="state._arrearsTab='arrears';pageArrears()">
-          ðŸ”´ In Arrears (${arrearsLoans.length})
+           In Arrears (${arrearsLoans.length})
         </button>
         <button class="${tab==='duetoday'?'active':''}" onclick="state._arrearsTab='duetoday';pageArrears()">
-          ðŸŸ¡ Due Today (${duetodayLoans.length})
+           Due Today (${duetodayLoans.length})
         </button>
         <button class="${tab==='duethisweek'?'active':''}" onclick="state._arrearsTab='duethisweek';pageArrears()">
-          ðŸŸ¢ Due Next 7 Days (${duethisweekLoans.length})
+           Due Next 7 Days (${duethisweekLoans.length})
         </button>
         <button class="${tab==='all'?'active':''}" onclick="state._arrearsTab='all';pageArrears()">
           All Active (${report.length})
@@ -3285,11 +3280,11 @@ function pageArrears(){
 
     ${tab==='arrears' ? `
     <div style="background:var(--danger-50,#fff1f0);border:1px solid var(--danger);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:var(--danger);margin-bottom:8px">
-      âš ï¸ <b>In Arrears</b> â€” these clients have missed one or more installment payments. Amount shown is the total overdue balance.
+      Warning:  <b>In Arrears</b> - these clients have missed one or more installment payments. Amount shown is the total overdue balance.
     </div>` : ''}
     ${tab==='duetoday' ? `
     <div style="background:#fffbeb;border:1px solid var(--warning);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:#92400e;margin-bottom:8px">
-      ðŸ“… <b>Due Today</b> â€” these clients have a scheduled payment <b>today</b> and are currently up to date. They do <b>not</b> have arrears.
+       <b>Due Today</b> - these clients have a scheduled payment <b>today</b> and are currently up to date. They do <b>not</b> have arrears.
     </div>` : ''}
 
     <div class="table-wrap">
@@ -3312,9 +3307,9 @@ function pageArrears(){
                                 : '<span class="badge b-green">On Track</span>';
             const amtColor = tab==='arrears'?'var(--danger)':tab==='duetoday'?'var(--warning)':'var(--success)';
             return `<tr>
-              <td class="sticky-name"><b>${r.member?.full_name||'—'}</b><div class="muted" style="font-size:11px">${r.member?.phone||''}</div></td>
-              <td>${r.group?.name||'â€”'}</td>
-              ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||'â€”'}</td>` : ''}
+              <td class="sticky-name"><b>${r.member?.full_name||' - '}</b><div class="muted" style="font-size:11px">${r.member?.phone||''}</div></td>
+              <td>${r.group?.name||' - '}</td>
+              ${isAdmin ? `<td style="font-size:12px">${r.officer?.full_name||' - '}</td>` : ''}
               <td>${r.loan.asset_name}</td>
               <td>${fmtDate(r.loan.start_date)}</td>
               <td class="num"><b style="color:${amtColor}">${KES(amountDisplay)}</b></td>
@@ -3323,7 +3318,7 @@ function pageArrears(){
               <td>${statusBadge}</td>
             </tr>`;
           }).join('') : `<tr><td colspan="${colCount}"><div class="empty"><h4>No records found</h4><p>${
-            tab==='arrears'?'No loans are currently in arrears â€” great!':
+            tab==='arrears'?'No loans are currently in arrears - great!':
             tab==='duetoday'?'No loans are due today.':
             tab==='duethisweek'?'No loans due in the next 7 days.':
             'No active loans match the current filters.'
@@ -3421,7 +3416,7 @@ function pageLoans(){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <div style="position:relative;min-width:220px">
-          <input id="loan-grp-search" type="text" placeholder="ðŸ” Search group nameâ€¦"
+          <input id="loan-grp-search" type="text" placeholder="Search group name..."
             value="${state._loanGroupFilter ? (visibleGroups.find(g=>g.id===state._loanGroupFilter)?.name||'') : ''}"
             autocomplete="off"
             style="width:100%;padding:7px 12px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
@@ -3448,13 +3443,13 @@ function pageLoans(){
     ${groupSummary.length > 1 && !state._loanGroupFilter ? `
     <div style="margin-bottom:20px">
       <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">
-        Group Overview â€” ${groupSummary.length} groups Â· click a group to filter
+        Group Overview - ${groupSummary.length} groups - click a group to filter
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
         ${groupSummary.map(({g, totalLoanValue, totalOutstanding, totalPaid, totalSavings, memberCount, off, ratio, health}) => {
           const barW = Math.min(100, totalOutstanding > 0 ? (totalSavings / (totalSavings + totalOutstanding)) * 100 : 100);
           const healthColor = health==='good' ? 'var(--success)' : health==='warn' ? 'var(--warning)' : 'var(--danger)';
-          const healthLabel = health==='good' ? 'âœ… Healthy' : health==='warn' ? 'âš ï¸ Watch' : 'ðŸ”´ At Risk';
+          const healthLabel = health==='good' ? 'Healthy' : health==='warn' ? 'Watch' : 'At Risk';
           return `<div class="card card-pad" style="cursor:pointer;transition:box-shadow .15s"
               onclick="state._loanGroupFilter='${g.id}';pageLoans()"
               onmouseenter="this.style.boxShadow='0 4px 16px rgba(0,0,0,.12)'"
@@ -3462,7 +3457,7 @@ function pageLoans(){
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
               <div>
                 <div style="font-weight:700;font-size:14px">${g.name}</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${memberCount} member(s) with loans${off?` Â· ${off.full_name}`:''}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${memberCount} member(s) with loans${off?` - ${off.full_name}`:''}</div>
               </div>
               <span style="font-size:11px;font-weight:600;color:${healthColor};white-space:nowrap;margin-left:8px">${healthLabel}</span>
             </div>
@@ -3495,8 +3490,8 @@ function pageLoans(){
                 <div style="height:100%;width:${barW}%;background:var(--success);border-radius:4px;transition:width .3s"></div>
               </div>
               <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px">
-                <span style="color:var(--success)">â–® Savings</span>
-                <span style="color:var(--danger)">â–® Outstanding</span>
+                <span style="color:var(--success)"> Savings</span>
+                <span style="color:var(--danger)"> Outstanding</span>
               </div>
             </div>
           </div>`;
@@ -3507,7 +3502,7 @@ function pageLoans(){
     ${state._loanGroupFilter && groupSummary.length === 1 ? (() => {
       const {g, totalLoanValue, totalOutstanding, totalPaid, totalSavings, memberCount, ratio, health} = groupSummary[0];
       const healthColor = health==='good' ? 'var(--success)' : health==='warn' ? 'var(--warning)' : 'var(--danger)';
-      const healthLabel = health==='good' ? 'âœ… Healthy' : health==='warn' ? 'âš ï¸ Watch' : 'ðŸ”´ At Risk';
+      const healthLabel = health==='good' ? 'Healthy' : health==='warn' ? 'Watch' : 'At Risk';
       const barW = Math.min(100, totalOutstanding > 0 ? (totalSavings / (totalSavings + totalOutstanding)) * 100 : 100);
       return `
       <div class="card card-pad" style="margin-bottom:16px;border-left:4px solid ${healthColor}">
@@ -3516,7 +3511,7 @@ function pageLoans(){
             <div style="font-weight:700;font-size:15px">${g.name} <span style="font-size:12px;color:${healthColor};margin-left:6px">${healthLabel}</span></div>
             <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${memberCount} member(s) with loans</div>
           </div>
-          <button class="btn btn-outline btn-sm" onclick="state._loanGroupFilter='';pageLoans()">âœ• Clear filter</button>
+          <button class="btn btn-outline btn-sm" onclick="state._loanGroupFilter='';pageLoans()">Clear  Clear filter</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
           <div style="background:var(--surface-2);border-radius:var(--radius-sm);padding:10px"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">Total Savings</div><div style="font-weight:700;font-size:15px;color:var(--success)">${KES(totalSavings)}</div></div>
@@ -3556,10 +3551,10 @@ function pageLoans(){
             const expectedNow = loanExpectedCollectionAsOf(l);
             const bcls = l.status==='completed'?'b-grey':l.status==='defaulted'?'b-red':'b-blue';
             return `<tr style="${l.status==='completed'?'background:var(--surface-2);color:var(--text-muted)':l.status==='defaulted'?'background:var(--danger-50)':''}">
-              <td class="sticky-name"><b>${m?.full_name||'—'}</b></td>
-              <td>${grp?.name||'â€”'}</td>
+              <td class="sticky-name"><b>${m?.full_name||' - '}</b></td>
+              <td>${grp?.name||' - '}</td>
               <td>${l.asset_name}</td>
-              ${isAdmin ? `<td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'â€”'}</td>` : ''}
+              ${isAdmin ? `<td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>` : ''}
               <td>${fmtDate(l.start_date)}</td>
               <td>${fmtDate(nextDue)}</td>
               <td class="num">${KES(l.loan_value)}</td>
@@ -3570,7 +3565,7 @@ function pageLoans(){
               <td class="num">${KES(out)}</td>
               <td><span class="badge ${perf.badgeClass}">${perf.label} ${perf.score}%</span></td>
               <td><span class="badge ${bcls}">${l.status}</span></td>
-              <td><button class="act-btn" onclick="loanActions(event,'${l.id}')">Â·Â·Â·</button></td>
+              <td><button class="act-btn" onclick="loanActions(event,'${l.id}')"> - - - </button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="${isAdmin?15:14}"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
         </tbody>
@@ -3591,10 +3586,9 @@ function pageLoans(){
       const matches = visibleGroups.filter(g=>!q||g.name.toLowerCase().includes(q.toLowerCase()));
       loanGrpDrop.innerHTML = [
         `<div style="padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text-muted)"
-          onmousedown="state._loanGroupFilter='';pageLoans()">All Groups</div>`,
-        ...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
+          onmousedown="state._loanGroupFilter='';pageLoans()">All Groups</div>`,...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
           onmousedown="state._loanGroupFilter='${g.id}';pageLoans()">${g.name}
-          <span style="font-size:10px;color:var(--text-muted);margin-left:6px">${g.meeting_day||''} ${g.group_code?'Â· '+g.group_code:''}</span></div>`)
+          <span style="font-size:10px;color:var(--text-muted);margin-left:6px">${g.meeting_day||''} ${g.group_code?' -  '+g.group_code:''}</span></div>`)
       ].join('');
       loanGrpDrop.style.display = matches.length ? 'block' : 'none';
     };
@@ -3608,9 +3602,7 @@ function loanActions(ev, id){
   const isAdmin = state.staff.role==='admin';
   const canRepay = isAdmin || state.staff.role === 'officer';
   showActMenu(ev, [
-    { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
-    ...(canRepay && l.status==='active' ? [{ label:'ðŸ“¥ Record Repayment', onClick: ()=>openStandaloneRepayment(l.id, l.member_id) }] : []),
-    ...(isAdmin && l.status==='active' ? [
+    { label:'View schedule', onClick: ()=>showLoanSchedule(l) },...(canRepay && l.status==='active' ? [{ label:' Record Repayment', onClick: ()=>openStandaloneRepayment(l.id, l.member_id) }] : []),...(isAdmin && l.status==='active' ? [
       { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
       { label:'Restructure Loan', onClick: ()=>openLoanRestructure(l) },
       { label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog(
@@ -3624,7 +3616,7 @@ function loanActions(ev, id){
         )
       },
       'sep',
-      { label:'ðŸ—‘ Delete Loan', danger:true, onClick: ()=>confirmDialog(
+      { label:' Delete Loan', danger:true, onClick: ()=>confirmDialog(
           'PERMANENTLY delete this active loan? All repayment records will remain but the loan will be removed from the system. This action cannot be undone.',
           async()=>{
             if(!(await ensureFreshToken())) return;
@@ -3681,7 +3673,7 @@ function openLoanRestructure(l){
   const outstanding = Number(l.total_payable) - paid;
 
   modal({
-    title: 'Restructure Loan â€” ' + l.asset_name,
+    title: 'Restructure Loan - ' + l.asset_name,
     body: '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">'
         + 'Adjust the weekly installment to recalculate the remaining repayment schedule.'
         + '<br><b>Current Weekly:</b> ' + KES(l.weekly_installment)
@@ -3730,7 +3722,7 @@ function openLoanRestructure(l){
 function showLoanSchedule(l){
   const sched = computeSchedule(Number(l.loan_value), Number(l.weekly_installment), 'flat', new Date(l.start_date));
   modal({
-    title:`Repayment schedule â€” ${l.asset_name}`,
+    title:`Repayment schedule - ${l.asset_name}`,
     size:'lg',
     body:`<div class="table-wrap"><table class="tbl">
       <thead><tr><th>Wk</th><th>Due</th><th class="num">Principal</th><th class="num">Interest</th><th class="num">Installment</th><th class="num">Balance</th></tr></thead>
@@ -3747,10 +3739,10 @@ function pageCalculator(){
   $('page').innerHTML = `
     <div class="page-head"><div><h1>Loan calculator</h1><div class="desc">Compute weekly repayment schedules at the configured monthly interest rate.</div></div></div>
     <div class="card card-pad" style="margin-bottom:14px;background:var(--surface-2);border-left:3px solid var(--primary)">
-      <h4 style="margin:0 0 8px;font-size:13px;color:var(--primary)">â„¹ï¸ How interest methods work</h4>
+      <h4 style="margin:0 0 8px;font-size:13px;color:var(--primary)">Note:  How interest methods work</h4>
       <div style="font-size:13px;line-height:1.6;color:var(--text-muted)">
-        <b>Flat Rate:</b> Interest is calculated once on the full original loan amount for the entire duration. Every week carries the same interest charge regardless of how much has been repaid â€” simpler but costs more overall.<br>
-        <b>Reducing Balance:</b> Interest is calculated only on the outstanding (unpaid) balance each week. As the borrower repays, the balance shrinks and so does the interest charge â€” making it cheaper over time. The global <em>monthly interest rate</em> set in Settings drives both methods.
+        <b>Flat Rate:</b> Interest is calculated once on the full original loan amount for the entire duration. Every week carries the same interest charge regardless of how much has been repaid - simpler but costs more overall.<br>
+        <b>Reducing Balance:</b> Interest is calculated only on the outstanding (unpaid) balance each week. As the borrower repays, the balance shrinks and so does the interest charge - making it cheaper over time. The global <em>monthly interest rate</em> set in Settings drives both methods.
       </div>
     </div>
     <div class="grid-2">
@@ -3871,8 +3863,8 @@ function pageInventory(){
       <div><h1>Inventory</h1><div class="desc">${isAdmin?'Assets available for loan issuance.':'Check asset availability before placing orders.'}</div></div>
       <div class="actions">
         ${isAdmin?`
-        <button class="btn btn-outline" onclick="downloadInventoryTemplate()">â¬‡ Download template</button>
-        <button class="btn btn-outline" onclick="$('inv-import').click()">â¬† Import from Excel</button>
+        <button class="btn btn-outline" onclick="downloadInventoryTemplate()"> Download template</button>
+        <button class="btn btn-outline" onclick="$('inv-import').click()"> Import from Excel</button>
         <input type="file" id="inv-import" accept=".xlsx,.xls,.csv" style="display:none" onchange="importInventory(this)" />
         <button class="btn btn-outline" onclick="exportInventory()">Export</button>
         <button class="btn btn-primary" onclick="openAssetForm()">Add asset</button>
@@ -3882,7 +3874,7 @@ function pageInventory(){
     <div class="toolbar">
       <div class="search-box grow">
         <span class="ic">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
-        <input id="inv-search" placeholder="Search assetsâ€¦" value="${state._invSearch||''}" />
+        <input id="inv-search" placeholder="Search assets..." value="${state._invSearch||''}" />
       </div>
     </div>
     <div class="table-wrap">
@@ -3899,7 +3891,7 @@ function pageInventory(){
             const status = a.stock===0 ? `<span class="badge b-red">Out of stock</span>` : a.stock<=a.reorder_level ? `<span class="badge b-yellow">Low stock</span>` : `<span class="badge b-green">In stock</span>`;
             return `<tr>
               <td><b>${a.name}</b></td>
-              <td>${a.category||'â€”'}</td>
+              <td>${a.category||' - '}</td>
               <td class="num">${a.stock}</td>
               <td class="num">${KES(a.buying_price)}</td>
               <td class="num">${KES(a.loan_price)}</td>
@@ -3907,16 +3899,16 @@ function pageInventory(){
               <td class="num"><b>${KES(totalLoan)}</b></td>
               <td class="num">${margin.toFixed(1)}%</td>
               <td>${status}</td>
-              ${isAdmin?`<td><button class="act-btn" onclick="invActions(event,'${a.id}')">Â·Â·Â·</button></td>`:'<td></td>'}
+              ${isAdmin?`<td><button class="act-btn" onclick="invActions(event,'${a.id}')"> - - - </button></td>`:'<td></td>'}
             </tr>`;
           }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No inventory yet</h4><p>Add assets manually or import from Excel.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
     ${total > PAGE_SIZE ? `<div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--text-muted)">
-      <button class="btn btn-sm btn-outline" ${_page===0?'disabled':''} onclick="state._invPage=${_page-1};pageInventory()">â† Prev</button>
+      <button class="btn btn-sm btn-outline" ${_page===0?'disabled':''} onclick="state._invPage=${_page-1};pageInventory()">Previous</button>
       <span>Page ${_page+1} of ${Math.ceil(total/PAGE_SIZE)} &nbsp;(${total} assets)</span>
-      <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._invPage=${_page+1};pageInventory()">Next â†’</button>
+      <button class="btn btn-sm btn-outline" ${(_page+1)*PAGE_SIZE>=total?'disabled':''} onclick="state._invPage=${_page+1};pageInventory()">Next -></button>
     </div>` : ''}
   `;
   $('inv-search').addEventListener('input', e=>{ state._invSearch=e.target.value; state._invPage=0; pageInventory(); setTimeout(()=>{ const el=$('inv-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } },0); });
@@ -3948,13 +3940,13 @@ async function importInventory(input){
     try {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, { type:'array' });
-      // Accept any sheet name â€” use the first sheet
+      // Accept any sheet name - use the first sheet
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { defval:'' });
 
       if(!rows.length){ toast('No data rows found in the file.','error'); input.value=''; return; }
 
-      // Flexible column mapping â€” handle variations in header names
+      // Flexible column mapping - handle variations in header names
       const colMap = (row) => {
         const keys = Object.keys(row);
         const find = (...candidates) => {
@@ -4008,7 +4000,7 @@ async function importInventory(input){
             for(const row of mapped){
               const exists = state.data.inventory.find(a=>a.name.toLowerCase()===row.name.toLowerCase());
               if(exists){ skipped++; continue; }
-              const { data, error } = await sb.from('pb_inventory').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
+              const { data, error } = await sb.from('pb_inventory').insert({...row, business_id: state.staff.business_id || null }).select().single();
               if(error){ failed++; console.warn('Import failed for',row.name,error.message); }
               else { state.data.inventory.push(data); added++; }
             }
@@ -4031,8 +4023,7 @@ function invActions(ev, id){
   showActMenu(ev, [
     { label:'Edit asset', onClick: ()=>openAssetForm(a) },
     { label:'Quick restock', onClick: ()=>quickRestock(a) },
-    'sep',
-    ...(isAdmin ? [{ label:'Delete asset', danger:true, onClick: ()=>confirmDialog(`Delete "${a.name}"?`, async()=>{
+    'sep',...(isAdmin ? [{ label:'Delete asset', danger:true, onClick: ()=>confirmDialog(`Delete "${a.name}"?`, async()=>{
       await sb.from('pb_inventory').delete().eq('id', id);
       state.data.inventory = state.data.inventory.filter(x=>x.id!==id);
       audit('delete','pb_inventory',id); render(); toast('Asset deleted','success');
@@ -4054,7 +4045,7 @@ function openAssetForm(a=null){
         <div class="field"><label>Reorder level</label><input type="number" min="0" name="reorder_level" value="${a?.reorder_level||5}" /></div>
       </div>
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-top:2px">
-        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">Total inventory value (qty Ã— price)</div>
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">Total inventory value (qty x price)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><div style="font-size:11px;color:var(--text-muted)">At cost</div><div style="font-weight:700;font-size:15px" id="af-totalcost">${KES((a?.stock||0)*(a?.buying_price||0))}</div></div>
           <div><div style="font-size:11px;color:var(--text-muted)">At loan price</div><div style="font-weight:700;font-size:15px;color:var(--accent)" id="af-totalloan">${KES((a?.stock||0)*(a?.loan_price||0))}</div></div>
@@ -4072,7 +4063,7 @@ function openAssetForm(a=null){
           if(error) return toast(error.message,'error');
           Object.assign(a, row); audit('update','pb_inventory',a.id);
         } else {
-          const { data, error } = await sb.from('pb_inventory').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
+          const { data, error } = await sb.from('pb_inventory').insert({...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.inventory.unshift(data); audit('create','pb_inventory',data.id);
         }
@@ -4090,7 +4081,7 @@ function assetCalcTotals(){
 }
 function quickRestock(a){
   modal({
-    title:`Restock â€” ${a.name}`,
+    title:`Restock - ${a.name}`,
     body:`<div class="field"><label>Add units</label><input id="qr" type="number" min="1" value="1" /></div>`,
     actions:[
       { label:'Cancel', onClick: closeModal },
@@ -4143,13 +4134,13 @@ function pageOrders(){
           const cls = ({pending:'b-yellow',approved:'b-blue',rejected:'b-red',fulfilled:'b-green'})[o.status];
           return `<tr>
             <td>${fmtDate(o.ordered_on)}</td>
-            <td>${m?.full_name||'â€”'}</td>
-            <td>${g?.name||'â€”'}</td>
+            <td>${m?.full_name||' - '}</td>
+            <td>${g?.name||' - '}</td>
             <td>${o.asset_name}</td>
             <td class="num">${o.quantity}</td>
             <td><span class="badge ${cls}">${o.status}</span></td>
-            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'â€”'}</td>
-            <td><button class="act-btn" onclick="orderActions(event,'${o.id}')">Â·Â·Â·</button></td>
+            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>
+            <td><button class="act-btn" onclick="orderActions(event,'${o.id}')"> - - - </button></td>
           </tr>`;
         }).join('') || `<tr><td colspan="8"><div class="empty"><h4>No orders</h4><p>Place a new order on behalf of a member.</p></div></td></tr>`}
       </tbody>
@@ -4178,15 +4169,15 @@ function _renderOrderLines(){
     <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:8px;position:relative" id="ord-line-${i}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Asset ${i+1}</div>
-        ${_orderLines.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 6px" onclick="_removeOrderLine(${i})">âœ• Remove</button>` : ''}
+        ${_orderLines.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 6px" onclick="_removeOrderLine(${i})">Clear  Remove</button>` : ''}
       </div>
       <div class="field" style="margin-bottom:8px">
         <div class="search-box" style="position:relative">
-          <input id="ord-ast-search-${i}" placeholder="Search assetâ€¦" autocomplete="off" style="padding-left:34px" oninput="_filterOrderAssets(${i})" onfocus="_filterOrderAssets(${i})" value="${line.asset_name||''}" />
+          <input id="ord-ast-search-${i}" placeholder="Search asset..." autocomplete="off" style="padding-left:34px" oninput="_filterOrderAssets(${i})" onfocus="_filterOrderAssets(${i})" value="${line.asset_name||''}" />
           <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
         </div>
         <div id="ord-ast-list-${i}" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
-        ${line.asset_name ? `<div class="muted" style="font-size:11px;margin-top:3px">âœ“ ${line.asset_name} Â· ${KES(line.loan_price||0)} Â· stock: ${line.stock||0}</div>` : ''}
+        ${line.asset_name ? `<div class="muted" style="font-size:11px;margin-top:3px"> ${line.asset_name} - ${KES(line.loan_price||0)} - stock: ${line.stock||0}</div>` : ''}
       </div>
       <div class="field" style="margin-bottom:0">
         <label style="font-size:11px">Quantity</label>
@@ -4204,7 +4195,7 @@ function _filterOrderAssets(lineIdx){
   const q = (input.value||'').toLowerCase();
   const matches = state.data.inventory.filter(a=>a.name.toLowerCase().includes(q)).slice(0,10);
   list.style.display = matches.length ? 'block' : 'none';
-  list.innerHTML = matches.map(a=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="_selectOrderLineAsset(${lineIdx},'${a.id}','${a.name.replace(/'/g,"\\'")}',${a.loan_price},${a.stock})">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">${KES(a.loan_price)} Â· stock ${a.stock}</span></div>`).join('');
+  list.innerHTML = matches.map(a=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="_selectOrderLineAsset(${lineIdx},'${a.id}','${a.name.replace(/'/g,"\\'")}',${a.loan_price},${a.stock})">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">${KES(a.loan_price)} - stock ${a.stock}</span></div>`).join('');
 }
 
 function _selectOrderLineAsset(lineIdx, id, name, price, stock){
@@ -4246,7 +4237,7 @@ function _updateOrderTotalSummary(){
   const principal = _orderLines.reduce((a,l)=>a+(Number(l.loan_price||0)*Number(l.quantity||1)),0);
   const wi = Number(document.getElementById('ord-wi')?.value)||0;
   if(!principal){ out.innerHTML=''; return; }
-  out.innerHTML = `Total loan value: <b>${KES(principal)}</b>${wi ? ` Â· Total payable ${KES(computeSchedule(principal,wi,'flat',new Date()).totalPayable)}` : ' â€” enter desired installment to see repayment summary.'}`;
+  out.innerHTML = `Total loan value: <b>${KES(principal)}</b>${wi ? ` - Total payable ${KES(computeSchedule(principal,wi,'flat',new Date()).totalPayable)}` : ' - enter desired installment to see repayment summary.'}`;
 }
 
 function openOrderForm(){
@@ -4256,7 +4247,7 @@ function openOrderForm(){
     body:`
       <div class="field"><label>Member *</label>
         <div class="search-box" style="position:relative">
-          <input id="ord-mem-search" placeholder="Type member nameâ€¦" autocomplete="off" style="padding-left:34px" oninput="filterOrderMembers()" />
+          <input id="ord-mem-search" placeholder="Type member name..." autocomplete="off" style="padding-left:34px" oninput="filterOrderMembers()" />
           <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
         </div>
         <div id="ord-mem-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
@@ -4405,17 +4396,17 @@ function filterOrderMembers(){
 
   list.innerHTML = matches.map(m => {
     const g   = state.data.groups.find(x => x.id === m.group_id);
-    const groupLabel = g?.name || 'â€”';
-    const idLabel    = m.national_id || 'â€”';
+    const groupLabel = g?.name || ' - ';
+    const idLabel    = m.national_id || ' - ';
     const phone      = m.phone || '';
     return `<div
       style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)"
       onmousedown="selectOrderMember('${m.id}','${m.full_name.replace(/'/g,"\\'")}','${groupLabel.replace(/'/g,"\\'")}')">
       <div style="font-size:13px;font-weight:600">${m.full_name}</div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap">
-        <span>ðŸ“‹ ${groupLabel}</span>
-        <span>ðŸªª ${idLabel}</span>
-        ${phone ? `<span>ðŸ“ž ${phone}</span>` : ''}
+        <span> ${groupLabel}</span>
+        <span>ID:  ${idLabel}</span>
+        ${phone ? `<span>Phone:  ${phone}</span>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -4423,7 +4414,7 @@ function filterOrderMembers(){
 function selectOrderMember(id, name, groupName){
   $('ord-mem-id').value = id;
   $('ord-mem-search').value = name;
-  $('ord-mem-sel').textContent = groupName ? 'âœ“ '+name+' Â· '+groupName : 'âœ“ '+name;
+  $('ord-mem-sel').textContent = groupName ? ' '+name+' - '+groupName : ' '+name;
   $('ord-mem-list').style.display = 'none';
 }
 function filterOrderAssets(){
@@ -4431,12 +4422,12 @@ function filterOrderAssets(){
   const list = $('ord-ast-list'); if(!list) return;
   const matches = state.data.inventory.filter(a=>a.name.toLowerCase().includes(q)).slice(0,10);
   list.style.display = matches.length ? 'block' : 'none';
-  list.innerHTML = matches.map(a=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="selectOrderAsset('${a.id}','${a.name.replace(/'/g,"\\'")}',${a.loan_price},${a.stock})">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">${KES(a.loan_price)} Â· stock ${a.stock}</span></div>`).join('');
+  list.innerHTML = matches.map(a=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="selectOrderAsset('${a.id}','${a.name.replace(/'/g,"\\'")}',${a.loan_price},${a.stock})">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">${KES(a.loan_price)} - stock ${a.stock}</span></div>`).join('');
 }
 function selectOrderAsset(id, name, price, stock){
   $('ord-ast-id').value = id;
   $('ord-ast-search').value = name;
-  $('ord-ast-sel').textContent = 'âœ“ '+name+' Â· '+KES(price)+' Â· stock: '+stock;
+  $('ord-ast-sel').textContent = ' '+name+' - '+KES(price)+' - stock: '+stock;
   $('ord-ast-list').style.display = 'none';
   ordCalcLoanTerms();
 }
@@ -4466,7 +4457,7 @@ function approveOrder(o){
       if(parsed && Array.isArray(parsed.assets) && parsed.assets.length) {
         assetLines = parsed.assets;
       }
-    } catch(e){ /* legacy order â€” fall back to single-asset */ }
+    } catch(e){ /* legacy order - fall back to single-asset */ }
   }
 
   // Build resolved lines array with live inventory objects
@@ -4492,10 +4483,10 @@ function approveOrder(o){
   const requiresDeposit = principal > 20000;
   const depositAmount = requiresDeposit ? Math.round(principal * 0.25) : 0;
 
-  const assetSummaryRows = resolvedLines.map(l=>`<tr><td>${l.asset.name} Ã— ${l.quantity}</td><td><b>${KES(l.loan_price*l.quantity)}</b></td></tr>`).join('');
+  const assetSummaryRows = resolvedLines.map(l=>`<tr><td>${l.asset.name} x ${l.quantity}</td><td><b>${KES(l.loan_price*l.quantity)}</b></td></tr>`).join('');
 
   modal({
-    title:`Approve & issue loan â€” ${member.full_name}`,
+    title:`Approve & issue loan - ${member.full_name}`,
     body:`<form id="al">
       <table class="summary-table">
         ${assetSummaryRows}
@@ -4503,7 +4494,7 @@ function approveOrder(o){
       </table>
       ${requiresDeposit ? `
       <div style="background:var(--warning-50);border:1px solid var(--warning);border-radius:var(--radius-sm);padding:12px 14px;margin:12px 0;font-size:13px">
-        <div style="font-weight:700;color:var(--warning);margin-bottom:4px">âš ï¸ Deposit Required</div>
+        <div style="font-weight:700;color:var(--warning);margin-bottom:4px">Warning:  Deposit Required</div>
         <div>A <b>25% deposit of ${KES(depositAmount)}</b> is required for loans over KES 20,000. It will <b>not</b> be auto-deducted; collect it once or in installments through the Meeting Recorder deposit column.</div>
       </div>` : ''}
       <div class="divider"></div>
@@ -4558,7 +4549,7 @@ function approveOrder(o){
         state.data.loans.unshift(loanData);
         audit('loan_issue','pb_loans',loanData.id,null,loan);
 
-        closeModal(); render(); toast('Loan issued and stock deducted'+(requiresDeposit?' — deposit to be collected via Meeting Recorder':''),'success');
+        closeModal(); render(); toast('Loan issued and stock deducted'+(requiresDeposit?' - deposit to be collected via Meeting Recorder':''),'success');
       }}
     ]
   });
@@ -4594,7 +4585,7 @@ function approveOrder(o){
       const s = new Date($('sd').value||todayISO());
       const r = computeSchedule(principal, w, 'flat', s);
       const over52 = r.weeks > 48;
-      $('al-out').innerHTML = `Total payable ${KES(r.totalPayable)} Â· Total interest ${KES(r.totalInterest)} Â· ${r.weeks} weeks${over52 ? ' <span class="danger-text">(exceeds 48-week limit)</span>' : ''}`;
+      $('al-out').innerHTML = `Total payable ${KES(r.totalPayable)} - Total interest ${KES(r.totalInterest)} - ${r.weeks} weeks${over52 ? ' <span class="danger-text">(exceeds 48-week limit)</span>' : ''}`;
     };
     $('al-weeks').addEventListener('input', updFromWeeks);
     $('wi').addEventListener('input', updFromInstallment);
@@ -4631,19 +4622,19 @@ function pageReports(){
 function buildReportRows(kind){
   if(kind==='savings') return state.data.savings.map(s => {
     const m = state.data.members.find(x=>x.id===s.member_id), g = state.data.groups.find(x=>x.id===s.group_id);
-    return { Date:s.meeting_date, Member:m?.full_name||'â€”', ID:m?.national_id||'â€”', Group:g?.name||'â€”', Amount:Number(s.amount) };
+    return { Date:s.meeting_date, Member:m?.full_name||' - ', ID:m?.national_id||' - ', Group:g?.name||' - ', Amount:Number(s.amount) };
   });
   if(kind==='repayments') return state.data.repayments.map(r => {
     const m = state.data.members.find(x=>x.id===r.member_id);
-    return { Date:r.meeting_date, Member:m?.full_name||'â€”', Amount:Number(r.amount), Principal:Number(r.principal), Interest:Number(r.interest) };
+    return { Date:r.meeting_date, Member:m?.full_name||' - ', Amount:Number(r.amount), Principal:Number(r.principal), Interest:Number(r.interest) };
   });
   if(kind==='loans') return state.data.loans.map(l => {
     const m = state.data.members.find(x=>x.id===l.member_id);
-    return { Member:m?.full_name||'â€”', Asset:l.asset_name, LoanValue:Number(l.loan_value), Weekly:Number(l.weekly_installment), Paid:loanPaid(l.id), Outstanding:Number(l.total_payable)-loanPaid(l.id), Status:l.status };
+    return { Member:m?.full_name||' - ', Asset:l.asset_name, LoanValue:Number(l.loan_value), Weekly:Number(l.weekly_installment), Paid:loanPaid(l.id), Outstanding:Number(l.total_payable)-loanPaid(l.id), Status:l.status };
   });
   if(kind==='members') return state.data.members.map(m => {
     const g = state.data.groups.find(x=>x.id===m.group_id);
-    return { Name:m.full_name, ID:m.national_id, Phone:m.phone, Group:g?.name||'â€”', Savings:memberSavings(m.id), Eligible:memberEligible(m.id)?'Yes':'No', Status:m.status };
+    return { Name:m.full_name, ID:m.national_id, Phone:m.phone, Group:g?.name||' - ', Savings:memberSavings(m.id), Eligible:memberEligible(m.id)?'Yes':'No', Status:m.status };
   });
   if(kind==='inventory') return state.data.inventory.map(a => ({
     Name:a.name, Category:a.category, Qty:a.stock, CostPerUnit:Number(a.buying_price), LoanPricePerUnit:Number(a.loan_price),
@@ -4651,7 +4642,7 @@ function buildReportRows(kind){
   }));
   if(kind==='orders') return state.data.orders.map(o => {
     const m = state.data.members.find(x=>x.id===o.member_id);
-    return { Date:o.ordered_on, Member:m?.full_name||'â€”', Asset:o.asset_name, Qty:o.quantity, Status:o.status };
+    return { Date:o.ordered_on, Member:m?.full_name||' - ', Asset:o.asset_name, Qty:o.quantity, Status:o.status };
   });
   return [];
 }
@@ -4709,7 +4700,7 @@ function pageStaff(){
           <td><span class="badge ${s.role==='admin'?'b-blue':'b-grey'}">${s.role}</span></td>
           <td><span class="badge ${s.status==='active'?'b-green':'b-red'}">${s.status}</span></td>
           <td>${s.role==='admin'?'<span class="muted">Full access</span>':'<button class="btn btn-sm btn-outline" onclick="editPerms(\''+s.id+'\')">Manage</button>'}</td>
-          <td><button class="act-btn" onclick="staffActions(event,'${s.id}')">Â·Â·Â·</button></td>
+          <td><button class="act-btn" onclick="staffActions(event,'${s.id}')"> - - - </button></td>
         </tr>`).join('') || `<tr><td colspan="6"><div class="empty"><h4>No staff yet</h4><p>Add loan officers to enable field operations.</p></div></td></tr>`}
       </tbody>
     </table></div>
@@ -4797,7 +4788,7 @@ async function editPerms(id){
     ['can_manage_suppliers','Manage suppliers and purchases']
   ];
   modal({
-    title:`Permissions â€” ${s.full_name}`,
+    title:`Permissions - ${s.full_name}`,
     body: flags.map(([k,l]) => `<div class="checkbox-row" style="padding:8px 0;border-bottom:1px solid var(--border)">
       <input type="checkbox" id="p-${k}" ${cur[k]?'checked':''} /><label for="p-${k}" style="margin:0">${l}</label>
     </div>`).join(''),
@@ -4840,8 +4831,8 @@ function pageSettings(){
             <label>Monthly interest rate (%)</label>
             <input type="number" step="0.0001" min="0" name="monthly_interest_rate" id="monthly_interest_input" value="${s.monthly_interest_rate||2.5}" oninput="updateWeeklyRateDisplay(this.value)" />
             <div id="weekly_rate_display" style="margin-top:6px;font-size:12px;color:var(--text-muted)">
-              â‰ˆ Weekly rate: <b id="weekly_rate_val">${((s.monthly_interest_rate||2.5)/4).toFixed(4)}%</b>
-              &nbsp;Â·&nbsp; e.g. KES 10,000 loan = <b id="weekly_interest_ex">${KES(((s.monthly_interest_rate||2.5)/4/100)*10000)}</b> interest/week (flat)
+              Approx. Weekly rate: <b id="weekly_rate_val">${((s.monthly_interest_rate||2.5)/4).toFixed(4)}%</b>
+              &nbsp; - &nbsp; e.g. KES 10,000 loan = <b id="weekly_interest_ex">${KES(((s.monthly_interest_rate||2.5)/4/100)*10000)}</b> interest/week (flat)
             </div>
           </div>
         </div>
@@ -4851,7 +4842,7 @@ function pageSettings(){
 
     <div class="card card-pad" style="max-width:720px;margin-top:20px">
       <div class="card-head" style="padding:0 0 14px 0;border:none">
-        <h3 style="margin:0">ðŸ“² M-Pesa Daraja API Integration</h3>
+        <h3 style="margin:0"> M-Pesa Daraja API Integration</h3>
         <div class="sub" style="margin-top:4px">
           Connect Safaricom's Daraja API so M-Pesa payments to your Paybill (group remittances and
           individual late payments) are automatically captured by the system.
@@ -4877,7 +4868,7 @@ function pageSettings(){
         </div>
 
         <div class="field">
-          <label>Callback URL <span class="muted" style="font-weight:400">(auto-generated â€” give this to Safaricom)</span></label>
+          <label>Callback URL <span class="muted" style="font-weight:400">(auto-generated - give this to Safaricom)</span></label>
           <div style="display:flex;gap:8px;align-items:center">
             <input id="collections-callback-url" value="${callbackUrl}" readonly style="font-family:monospace;font-size:12px;background:var(--surface-2)" />
             <button type="button" class="btn btn-outline btn-sm" onclick="copyCallbackUrl()">Copy</button>
@@ -4885,7 +4876,7 @@ function pageSettings(){
           <div class="helper">
             This unique URL is generated automatically for your business. Register it as both the
             <b>Validation URL</b> and <b>Confirmation URL</b> on the Daraja portal (or run the
-            <code class="kbd">collections-register-urls</code> edge function once it's deployed â€” see setup guide).
+            <code class="kbd">collections-register-urls</code> edge function once it's deployed - see setup guide).
           </div>
         </div>
 
@@ -4900,9 +4891,9 @@ function pageSettings(){
     // Fix 1: Use upsert with the correct business-scoped ID so new businesses
     // don't silently fail (update requires an existing row; upsert creates or updates).
     const settingsId = state.staff?.business_id ? ('biz_' + state.staff.business_id) : 'main';
-    const { error } = await sb.from('pb_settings').upsert({ id: settingsId, ...row });
+    const { error } = await sb.from('pb_settings').upsert({ id: settingsId,...row });
     if(error) return toast(error.message,'error');
-    state.settings = { ...state.settings, ...row, id: settingsId };
+    state.settings = {...state.settings,...row, id: settingsId };
     lsSet('settings', state.settings);
     audit('update_settings','pb_settings', settingsId, null, row);
     toast('Settings saved','success');
@@ -4915,9 +4906,9 @@ function pageSettings(){
     // and the dashboard always show the same value
     row.mpesa_callback_url = callbackUrl;
     const settingsId = state.staff?.business_id ? ('biz_' + state.staff.business_id) : 'main';
-    const { error } = await sb.from('pb_settings').upsert({ id: settingsId, ...row });
+    const { error } = await sb.from('pb_settings').upsert({ id: settingsId,...row });
     if(error) return toast(error.message,'error');
-    state.settings = { ...state.settings, ...row, id: settingsId };
+    state.settings = {...state.settings,...row, id: settingsId };
     lsSet('settings', state.settings);
     audit('update_mpesa_settings','pb_settings', settingsId, null, { mpesa_environment: row.mpesa_environment, mpesa_shortcode: row.mpesa_shortcode });
     toast('M-Pesa settings saved','success');
@@ -4945,9 +4936,9 @@ async function pageAudit(){
     <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entity</th><th>Reference</th></tr></thead>
     <tbody>${(data||[]).map(r => `<tr>
       <td>${new Date(r.created_at).toLocaleString('en-KE')}</td>
-      <td>${r.staff_name||'â€”'}</td>
+      <td>${r.staff_name||' - '}</td>
       <td><code class="kbd">${r.action}</code></td>
-      <td>${r.entity||'â€”'}</td>
+      <td>${r.entity||' - '}</td>
       <td class="muted">${r.entity_id||''}</td>
     </tr>`).join('') || `<tr><td colspan="5"><div class="empty"><h4>No audit entries yet</h4></div></td></tr>`}</tbody>
   </table></div>`;
@@ -4999,7 +4990,7 @@ function openSwitchUser(){
   modal({
     title:'Switch user',
     body:`<div class="field"><label>Select account</label>
-      <select id="su-id">${ids.map(id => `<option value="${id}">${pins[id].name} Â· ${pins[id].role}</option>`).join('')}</select></div>
+      <select id="su-id">${ids.map(id => `<option value="${id}">${pins[id].name} - ${pins[id].role}</option>`).join('')}</select></div>
       <div class="field"><label>Enter PIN</label><input id="su-pin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" /></div>`,
     actions:[
       { label:'Cancel', onClick: closeModal },
@@ -5033,13 +5024,13 @@ function pageSuppliers(){
       <thead><tr><th>Name</th><th>Contact person</th><th>Phone</th><th>Email</th><th>Location</th><th>Assets supplied</th><th></th></tr></thead>
       <tbody>
         ${list.map(s => `<tr>
-          <td><b>${s.name||'â€”'}</b></td>
-          <td>${s.contact_person||'â€”'}</td>
-          <td>${s.phone||'â€”'}</td>
-          <td>${s.email||'â€”'}</td>
-          <td>${s.location||'â€”'}</td>
-          <td>${s.assets_supplied||'â€”'}</td>
-          <td><button class="act-btn" onclick="supplierActions(event,'${s.id}')">Â·Â·Â·</button></td>
+          <td><b>${s.name||' - '}</b></td>
+          <td>${s.contact_person||' - '}</td>
+          <td>${s.phone||' - '}</td>
+          <td>${s.email||' - '}</td>
+          <td>${s.location||' - '}</td>
+          <td>${s.assets_supplied||' - '}</td>
+          <td><button class="act-btn" onclick="supplierActions(event,'${s.id}')"> - - - </button></td>
         </tr>`).join('') || `<tr><td colspan="7"><div class="empty"><h4>No suppliers yet</h4><p>Add your first supplier to start receiving stock.</p></div></td></tr>`}
       </tbody>
     </table></div>`;
@@ -5078,7 +5069,7 @@ function openSupplierForm(s=null){
           if(error) return toast(error.message,'error');
           Object.assign(s, row); audit('update','pb_suppliers',s.id);
         } else {
-          const { data, error } = await sb.from('pb_suppliers').insert({ ...row, business_id: state.staff.business_id || null }).select().single();
+          const { data, error } = await sb.from('pb_suppliers').insert({...row, business_id: state.staff.business_id || null }).select().single();
           if(error) return toast(error.message,'error');
           state.data.suppliers.unshift(data); audit('create','pb_suppliers',data.id);
         }
@@ -5111,19 +5102,19 @@ function pagePurchases(){
       return `<div class="card" style="margin-bottom:14px">
         <div class="card-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none'" style="cursor:pointer">
           <h3>${label}</h3>
-          <div class="muted" style="font-size:12px">${rows.length} purchase${rows.length>1?'s':''} Â· total ${KES(total)}</div>
+          <div class="muted" style="font-size:12px">${rows.length} purchase${rows.length>1?'s':''} - total ${KES(total)}</div>
         </div>
         <div class="table-wrap" style="border:none;border-radius:0;border-top:1px solid var(--border)">
           <table class="tbl">
             <thead><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th class="num">Lines</th><th class="num">Total cost</th><th>Received by</th><th></th></tr></thead>
             <tbody>${rows.map(p => `<tr>
               <td>${fmtDate(p.received_on)}</td>
-              <td>${p.supplier_name||'â€”'}</td>
-              <td>${p.invoice_no||'â€”'}</td>
+              <td>${p.supplier_name||' - '}</td>
+              <td>${p.invoice_no||' - '}</td>
               <td class="num">${(p.items||[]).length}</td>
               <td class="num">${KES(p.total_cost)}</td>
-              <td>${p.received_by_name||'â€”'}</td>
-              <td><button class="act-btn" onclick="purchaseActions(event,'${p.id}')">Â·Â·Â·</button></td>
+              <td>${p.received_by_name||' - '}</td>
+              <td><button class="act-btn" onclick="purchaseActions(event,'${p.id}')"> - - - </button></td>
             </tr>`).join('')}</tbody>
           </table>
         </div>
@@ -5135,8 +5126,7 @@ function purchaseActions(ev, id){
   const p = state.data.purchases.find(x=>x.id===id);
   const isAdmin = state.staff.role==='admin';
   showActMenu(ev, [
-    { label:'View detail', onClick: ()=>viewPurchase(p) },
-    ...(isAdmin ? [{ label:'Delete purchase', danger:true, onClick: ()=>confirmDialog(`Delete purchase ${p.invoice_no||p.id.slice(0,6)}? Stock will NOT be reversed automatically.`, async()=>{
+    { label:'View detail', onClick: ()=>viewPurchase(p) },...(isAdmin ? [{ label:'Delete purchase', danger:true, onClick: ()=>confirmDialog(`Delete purchase ${p.invoice_no||p.id.slice(0,6)}? Stock will NOT be reversed automatically.`, async()=>{
       await sb.from('pb_purchases').delete().eq('id', id);
       state.data.purchases = state.data.purchases.filter(x=>x.id!==id);
       audit('delete','pb_purchases',id); render(); toast('Purchase deleted','warn');
@@ -5147,15 +5137,15 @@ function viewPurchase(p){
   modal({
     title:`Purchase ${p.invoice_no||''}`, size:'lg',
     body:`<table class="summary-table">
-      <tr><td>Supplier</td><td>${p.supplier_name||'â€”'}</td></tr>
+      <tr><td>Supplier</td><td>${p.supplier_name||' - '}</td></tr>
       <tr><td>Date received</td><td>${fmtDate(p.received_on)}</td></tr>
       <tr><td>Total cost</td><td><b>${KES(p.total_cost)}</b></td></tr>
-      <tr><td>Notes</td><td>${p.notes||'â€”'}</td></tr>
+      <tr><td>Notes</td><td>${p.notes||' - '}</td></tr>
     </table>
     <h5 style="margin-top:14px;font-size:12px;color:var(--text-subtle);text-transform:uppercase">Line items</h5>
     <div class="table-wrap"><table class="tbl">
       <thead><tr><th>Asset</th><th class="num">Qty</th><th class="num">Cost / unit</th><th class="num">Subtotal</th><th>Batch</th></tr></thead>
-      <tbody>${(p.items||[]).map(it=>`<tr><td>${it.asset_name}</td><td class="num">${it.quantity}</td><td class="num">${KES(it.cost_per_unit)}</td><td class="num">${KES(it.subtotal)}</td><td>${it.batch_no||'â€”'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No line items recorded.</td></tr>'}</tbody>
+      <tbody>${(p.items||[]).map(it=>`<tr><td>${it.asset_name}</td><td class="num">${it.quantity}</td><td class="num">${KES(it.cost_per_unit)}</td><td class="num">${KES(it.subtotal)}</td><td>${it.batch_no||' - '}</td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No line items recorded.</td></tr>'}</tbody>
     </table></div>`,
     actions:[{ label:'Close', cls:'btn-primary', onClick: closeModal }]
   });
@@ -5173,7 +5163,7 @@ function openPurchaseForm(){
       <div class="grid-2">
         <div class="field"><label>Supplier *</label>
           <select name="supplier_id" required>
-            <option value="">â€” Select supplier â€”</option>
+            <option value=""> -  Select supplier  - </option>
             ${sups.map(s=>`<option value="${s.id}" data-name="${s.name}">${s.name}</option>`).join('')}
           </select>
         </div>
@@ -5208,7 +5198,7 @@ function renderPurLines(){
     <div class="grid-2">
       <div class="field" style="position:relative">
         <label>Asset ${l.isNew?'<span class="badge b-green" style="margin-left:4px;font-size:10px">New item</span>':''}</label>
-        <input id="pur-ast-q-${i}" placeholder="Search or type new asset nameâ€¦" value="${l.asset_name||''}" autocomplete="off"
+        <input id="pur-ast-q-${i}" placeholder="Search or type new asset name..." value="${l.asset_name||''}" autocomplete="off"
           oninput="purAssetSearch(${i},this.value)" onfocus="purAssetSearch(${i},this.value)" />
         <div id="pur-ast-dd-${i}" style="position:absolute;z-index:50;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);max-height:160px;overflow-y:auto;display:none;box-shadow:var(--shadow-md)"></div>
       </div>
@@ -5236,7 +5226,7 @@ function purAssetSearch(i, q){
   const showAdd = q && q.trim().length > 1 && !state.data.inventory.find(a=>a.name.toLowerCase()===q.toLowerCase());
   if(!matches.length && !showAdd){ dd.style.display='none'; return; }
   dd.style.display='block';
-  dd.innerHTML = matches.map(a=>`<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="purSelectAsset(${i},'${a.id}','${a.name.replace(/'/g,"\\'")}',${ a.buying_price},false)">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">cost ${KES(a.buying_price)} Â· stock ${a.stock}</span></div>`).join('')
+  dd.innerHTML = matches.map(a=>`<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="purSelectAsset(${i},'${a.id}','${a.name.replace(/'/g,"\\'")}',${ a.buying_price},false)">${a.name}<span class="muted" style="font-size:11px;margin-left:8px">cost ${KES(a.buying_price)} - stock ${a.stock}</span></div>`).join('')
     + (showAdd ? `<div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:600" onmousedown="purSelectAsset(${i},'','${q.replace(/'/g,"\\'")}',0,true)">+ Add as new item: "${q}"</div>` : '');
 }
 function purSelectAsset(i, id, name, defaultCost, isNew){
@@ -5277,10 +5267,10 @@ async function submitPurchase(){
     invoice_no: row.invoice_no||null, received_on: row.received_on,
     total_cost: total, notes: row.notes||null,
     received_by: state.staff.id, received_by_name: state.staff.full_name
-    // items column removed â€” stored in pb_purchase_lines instead
+    // items column removed - stored in pb_purchase_lines instead
   };
   const { data: created, error } = await sb.from('pb_purchases').insert(purchase).select().single();
-  if(error) return toast('Save failed: '+error.message+' â€” check pb_purchases table columns.','error');
+  if(error) return toast('Save failed: '+error.message+' - check pb_purchases table columns.','error');
   if(validLines.length){
     const lineRows = validLines.map(l => ({
       business_id: state.staff.business_id || null,
@@ -5303,7 +5293,7 @@ async function submitPurchase(){
     if(!qty) continue;
 
     if(l.isNew || !l.asset_id){
-      // Brand new asset â€” create inventory record
+      // Brand new asset - create inventory record
       const newRow = {
         business_id: state.staff.business_id || null,
         name: l.asset_name, category:'Other', stock: qty,
@@ -5316,7 +5306,7 @@ async function submitPurchase(){
       state.data.inventory.unshift(newAsset);
       invUpdated++;
     } else {
-      // Existing asset â€” find by id in local state (re-lookup each iteration so previous loops are reflected)
+      // Existing asset - find by id in local state (re-lookup each iteration so previous loops are reflected)
       const a = state.data.inventory.find(x=>x.id===l.asset_id);
       if(!a){ toast(`Asset "${l.asset_name}" not found in local inventory, skipping.`,'warn'); continue; }
       const prevStock = Number(a.stock||0);
@@ -5339,7 +5329,7 @@ async function submitPurchase(){
   }
   state.data.purchases.unshift(created);
   audit('purchase_create','pb_purchases',created.id, null, { total, lines: validLines.length });
-  closeModal(); render(); toast(`Stock received â€” ${invUpdated} of ${validLines.length} asset(s) updated in inventory.`,'success');
+  closeModal(); render(); toast(`Stock received - ${invUpdated} of ${validLines.length} asset(s) updated in inventory.`,'success');
 }
 
 
@@ -5374,11 +5364,11 @@ function pageReconciliation(){
 
     ${!isAdmin ? `
     <div class="card card-pad" style="margin-bottom:16px;background:var(--info-50);border-color:var(--info)">
-      <div style="font-weight:700;color:var(--info);margin-bottom:6px">Your job â€” Field logger</div>
+      <div style="font-weight:700;color:var(--info);margin-bottom:6px">Your job - Field logger</div>
       <div style="font-size:13px;line-height:1.9">
         <b>1.</b> After the meeting, the chairman collects cash from members (savings + repayments).<br>
         <b>2.</b> The chairman sends the total to the business M-Pesa Paybill and shows you the SMS.<br>
-        <b>3.</b> You click <b>Log remittance</b> â€” the system auto-fills the expected amount from meeting records.<br>
+        <b>3.</b> You click <b>Log remittance</b> - the system auto-fills the expected amount from meeting records.<br>
         <b>4.</b> You confirm whether the SMS amount matches, then submit. The admin confirms receipt on their end.
       </div>
     </div>` : ''}
@@ -5386,7 +5376,7 @@ function pageReconciliation(){
     ${isAdmin && pending.length ? `
     <div class="card" style="margin-bottom:16px;border-color:var(--warning)">
       <div class="card-head" style="border-color:var(--warning);background:var(--warning-50)">
-        <h3 style="color:var(--warning)">âš  Pending your confirmation (${pending.length})</h3>
+        <h3 style="color:var(--warning)">Warning:  Pending your confirmation (${pending.length})</h3>
         <div class="sub">Check your M-Pesa Paybill statement then confirm each one.</div>
       </div>
       <div style="overflow-x:auto"><table class="tbl">
@@ -5395,14 +5385,14 @@ function pageReconciliation(){
           const g = state.data.groups.find(x=>x.id===r.group_id);
           const off = state.data.staff.find(x=>x.id===r.logged_by);
           const mc = r.amount_matched==='yes'
-            ? '<span class="badge b-green">âœ“ Matches</span>'
+            ? '<span class="badge b-green"> Matches</span>'
             : r.amount_matched==='no'
-            ? '<span class="badge b-red">âœ— Differs</span>'
-            : '<span class="badge b-grey">â€”</span>';
+            ? '<span class="badge b-red"> Differs</span>'
+            : '<span class="badge b-grey">Pending</span>';
           return `<tr>
             <td>${fmtDate(r.meeting_date)}</td>
-            <td><b>${g?.name||'â€”'}</b></td>
-            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'â€”'}</td>
+            <td><b>${g?.name||' - '}</b></td>
+            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>
             <td class="num"><b>${KES(r.grand_total)}</b></td>
             <td>${mc}${r.amount_matched==='no'&&r.actual_sms_amount?` <span class="muted" style="font-size:11px">(SMS: ${KES(r.actual_sms_amount)})</span>`:''}</td>
             <td><button class="btn btn-sm btn-primary" onclick="confirmRecon('${r.id}')">Confirm received</button></td>
@@ -5423,23 +5413,23 @@ function pageReconciliation(){
           const g = state.data.groups.find(x=>x.id===r.group_id);
           const off = state.data.staff.find(x=>x.id===r.logged_by);
           const mc = r.amount_matched==='yes'
-            ? '<span class="badge b-green">âœ“ Matches</span>'
+            ? '<span class="badge b-green"> Matches</span>'
             : r.amount_matched==='no'
-            ? '<span class="badge b-red">âœ— Differs</span>'
-            : '<span class="badge b-grey">â€”</span>';
+            ? '<span class="badge b-red"> Differs</span>'
+            : '<span class="badge b-grey">Pending</span>';
           const mpesaRef = r.mpesa_reference
             ? `<code style="font-family:monospace;font-size:11px;background:var(--surface-2);padding:1px 5px;border-radius:3px">${r.mpesa_reference}</code>`
             : '';
           return `<tr>
             <td>${fmtDate(r.meeting_date)}</td>
-            <td>${g?.name||'â€”'}</td>
-            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||'â€”'}</td>
+            <td>${g?.name||' - '}</td>
+            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>
             <td class="num">${KES(r.total_savings)}</td>
             <td class="num">${KES(r.total_repayments)}</td>
             <td class="num"><b>${KES(r.grand_total)}</b>${mpesaRef?`<div>${mpesaRef}</div>`:''}</td>
             <td>${mc}</td>
             <td><span class="badge ${r.status==='confirmed'?'b-green':'b-yellow'}">${r.status==='confirmed'?'Confirmed':'Pending'}</span></td>
-            <td><button class="act-btn" onclick="reconActions(event,'${r.id}')">Â·Â·Â·</button></td>
+            <td><button class="act-btn" onclick="reconActions(event,'${r.id}')"> - - - </button></td>
           </tr>`;
         }).join('')||`<tr><td colspan="9"><div class="empty"><h4>No remittances yet</h4><p>Loan officers log remittances after each meeting.</p></div></td></tr>`}
         </tbody>
@@ -5458,7 +5448,7 @@ function openReconForm(){
     title:'Log chairman remittance',
     body:`
       <div style="background:var(--info-50);border:1px solid var(--info);border-radius:var(--radius-sm);padding:11px 14px;margin-bottom:16px;font-size:13px">
-        Select the group and meeting date â€” the system will auto-fill the expected amount from your recorded savings and repayments.
+        Select the group and meeting date - the system will auto-fill the expected amount from your recorded savings and repayments.
       </div>
       <form id="rec-f">
         <div class="grid-2">
@@ -5498,9 +5488,9 @@ function openReconForm(){
         <div class="field">
           <label>Does the chairman's M-Pesa SMS show this exact amount? *</label>
           <select name="amount_matched" id="rec-match" required onchange="reconMatchChanged(this.value)">
-            <option value="">â€” Select after checking the SMS â€”</option>
-            <option value="yes">âœ“ Yes â€” the SMS amount matches exactly</option>
-            <option value="no">âœ— No â€” the SMS amount is different</option>
+            <option value="">Select after checking the SMS</option>
+            <option value="yes">Yes, the SMS amount matches exactly</option>
+            <option value="no">No, the SMS amount is different</option>
           </select>
           <div class="helper">Look at the M-Pesa confirmation SMS the chairman is showing you and compare the amount above.</div>
         </div>
@@ -5520,7 +5510,7 @@ function openReconForm(){
         const row = Object.fromEntries(fd);
         if(!row.group_id) return toast('Please select a group.','error');
         if(!row.amount_matched) return toast('Please confirm if the SMS amount matches.','error');
-        // Build insert with only known columns â€” prevents schema cache errors
+        // Build insert with only known columns - prevents schema cache errors
         const insert = {
           business_id: state.staff.business_id || null,
           group_id: row.group_id,
@@ -5541,8 +5531,8 @@ function openReconForm(){
         audit('recon_create','pb_reconciliations',data.id,null,{ matched:row.amount_matched });
         closeModal(); render();
         toast(row.amount_matched==='yes'
-          ? 'Remittance logged âœ“ â€” waiting for admin to confirm receipt.'
-          : 'Remittance logged with discrepancy â€” admin will investigate.','success');
+          ? 'Remittance logged - waiting for admin to confirm receipt.'
+          : 'Remittance logged with discrepancy - admin will investigate.','success');
       }}
     ]
   });
@@ -5562,7 +5552,7 @@ function setupReconGroupSearch(groups){
     drop.innerHTML = matches.length ? matches.map(g => `
       <div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px"
         onmousedown="document.getElementById('rec-group-id').value='${g.id}';document.getElementById('rec-group-search').value='${(g.name||'').replace(/'/g,"\\'")}';document.getElementById('rec-group-drop').style.display='none';reconAutoTotals('${g.id}')">
-        <b>${g.name}</b><span class="muted" style="font-size:11px;margin-left:6px">${g.meeting_day||''}${g.group_code?' · '+g.group_code:''}</span>
+        <b>${g.name}</b><span class="muted" style="font-size:11px;margin-left:6px">${g.meeting_day||''}${g.group_code?' - '+g.group_code:''}</span>
       </div>
     `).join('') : `<div style="padding:9px 12px;font-size:12px;color:var(--text-muted)">No groups found</div>`;
     drop.style.display = 'block';
@@ -5615,7 +5605,7 @@ async function confirmRecon(id){
     body:`
       <div class="card card-pad" style="background:var(--surface-2);margin-bottom:16px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
-          <div><div class="muted" style="font-size:11px">Group</div><b>${g?.name||'â€”'}</b></div>
+          <div><div class="muted" style="font-size:11px">Group</div><b>${g?.name||' - '}</b></div>
           <div><div class="muted" style="font-size:11px">Meeting date</div><b>${fmtDate(r.meeting_date)}</b></div>
           <div><div class="muted" style="font-size:11px">Savings</div>${KES(r.total_savings)}</div>
           <div><div class="muted" style="font-size:11px">Repayments</div>${KES(r.total_repayments)}</div>
@@ -5625,7 +5615,7 @@ async function confirmRecon(id){
           <div style="font-weight:800;font-size:20px;color:var(--accent)">${KES(r.grand_total)}</div>
         </div>
         ${r.amount_matched==='no'?`<div style="margin-top:8px;padding:8px 10px;background:var(--danger-50);border-radius:var(--radius-sm);font-size:12px;color:var(--danger)">
-          âš  Officer reported SMS amount differs${r.actual_sms_amount?' â€” SMS showed '+KES(r.actual_sms_amount):''}
+          Warning:  Officer reported SMS amount differs${r.actual_sms_amount?' - SMS showed '+KES(r.actual_sms_amount):''}
         </div>`:''}
       </div>
       <div class="field">
@@ -5644,7 +5634,7 @@ async function confirmRecon(id){
     `,
     actions:[
       { label:'Cancel', onClick: closeModal },
-      { label:'âœ“ Confirm received', cls:'btn-primary', onClick: async () => {
+      { label:' Confirm received', cls:'btn-primary', onClick: async () => {
         const ref = $('conf-ref').value.trim();
         const actualAmt = Number($('conf-amt').value)||r.grand_total;
         const notes = $('conf-notes').value.trim();
@@ -5660,7 +5650,7 @@ async function confirmRecon(id){
         if(error) return toast(error.message,'error');
         Object.assign(r, upd);
         audit('recon_confirm','pb_reconciliations',id,null,upd);
-        closeModal(); render(); toast('Remittance confirmed âœ“','success');
+        closeModal(); render(); toast('Remittance confirmed ','success');
       }}
     ]
   });
@@ -5669,8 +5659,7 @@ async function confirmRecon(id){
 function reconActions(ev, id){
   const r = state.data.reconciliations.find(x=>x.id===id);
   const isAdmin = state.staff.role==='admin';
-  showActMenu(ev, [
-    ...(isAdmin && r.status==='pending'
+  showActMenu(ev, [...(isAdmin && r.status==='pending'
       ? [{ label:'Confirm received', onClick: ()=>confirmRecon(id) }]
       : []),
     { label:'Delete', danger:true, onClick: ()=>confirmDialog('Delete this remittance record?', async()=>{
@@ -5720,7 +5709,7 @@ function pageMpesaPayments(){
   // Groups for filter dropdown
   const visibleGroups = isAdmin ? state.data.groups : state.data.groups.filter(g=>myGroupIds.has(g.id));
 
-  // Format sender â€” Safaricom hashes MSISDNs on production (long hex string)
+  // Format sender - Safaricom hashes MSISDNs on production (long hex string)
   // but sends FirstName/MiddleName/LastName in plain text.
   // We show the name when the phone is hashed, raw phone when it's plain.
   const formatSender = (t) => {
@@ -5739,17 +5728,13 @@ function pageMpesaPayments(){
     </div>
 
     <div class="card card-pad" style="background:var(--info-50);border-color:var(--info);margin-bottom:16px;font-size:13px;line-height:1.8">
-      <b>How this works:</b><br>
-      â€¢ <b>Group Remittances</b> â€” the chairman/treasurer sends the day's total collection to the Paybill using the group's M-Pesa code as the account number. This is the <b>normal, expected</b> channel for all savings and repayments.<br>
-      â€¢ <b>Individual / Late Payments</b> â€” occasionally a member who genuinely could not attend the meeting may send their own contribution directly to the Paybill (same group code, from their own registered phone).<br>
-      â€¢ <b>Unmatched</b> â€” payments where the account number could not be matched to a group. An admin must match these manually.<br>
-      â€¢ ðŸ”’ <b>Sender phone numbers</b> are encrypted by Safaricom on production for privacy â€” shown as "Verified sender".
+      <b>How this works:</b><br> - <b>Group Remittances</b> - the chairman/treasurer sends the day's total collection to the Paybill using the group's M-Pesa code as the account number. This is the <b>normal, expected</b> channel for all savings and repayments.<br> - <b>Individual / Late Payments</b> - occasionally a member who genuinely could not attend the meeting may send their own contribution directly to the Paybill (same group code, from their own registered phone).<br> - <b>Unmatched</b> - payments where the account number could not be matched to a group. An admin must match these manually.<br> - Privacy:  <b>Sender phone numbers</b> are encrypted by Safaricom on production for privacy - shown as "Verified sender".
     </div>
 
     <div class="card card-pad" style="background:var(--warning-50,#fffbeb);border-color:var(--warning);margin-bottom:16px;font-size:13px">
-      âš ï¸ <b>Policy note:</b> Members should attend weekly group meetings and pay through the chairman/treasurer.
+      Warning:  <b>Policy note:</b> Members should attend weekly group meetings and pay through the chairman/treasurer.
       Individual M-Pesa payments are an exception for genuine emergencies only.
-      ðŸ”’ No cash ever passes through the loan officer.
+      Privacy:  No cash ever passes through the loan officer.
     </div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
@@ -5769,7 +5754,7 @@ function pageMpesaPayments(){
       </div>
 
       <div style="position:relative;margin-left:8px;min-width:200px">
-        <input id="mpesa-grp-search" type="text" placeholder="Search groupâ€¦"
+        <input id="mpesa-grp-search" type="text" placeholder="Search group..."
           value="${gc ? (visibleGroups.find(g=>g.id===gc)?.name||'') : ''}"
           style="width:100%;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"
           autocomplete="off" />
@@ -5779,13 +5764,13 @@ function pageMpesaPayments(){
 
     <div class="tabs" style="margin-bottom:14px">
       <button class="${tab==='group'?'active':''}" onclick="state._mpesaTab='group';pageMpesaPayments()">
-        ðŸ’¼ Group Remittances (${groupRemit.length})
+         Group Remittances (${groupRemit.length})
       </button>
       <button class="${tab==='individual'?'active':''}" onclick="state._mpesaTab='individual';pageMpesaPayments()">
-        ðŸŸ¡ Individual / Late Payments ${unallocCount?`(${unallocCount} pending)`:'('+individual.length+')'}
+         Individual / Late Payments ${unallocCount?`(${unallocCount} pending)`:'('+individual.length+')'}
       </button>
       ${isAdmin?`<button class="${tab==='unmatched'?'active':''}" onclick="state._mpesaTab='unmatched';pageMpesaPayments()">
-        âš  Unmatched (${unmatched.length})
+        Warning:  Unmatched (${unmatched.length})
       </button>`:''}
     </div>
 
@@ -5802,13 +5787,13 @@ function pageMpesaPayments(){
             const linked = state.data.reconciliations.find(r=>r.mpesa_reference===t.trans_id);
             return `<tr>
               <td style="font-size:12px">${formatMpesaDateTime(t)}</td>
-              <td><b>${g?.name||'â€”'}</b></td>
-              <td><code style="font-family:monospace;font-size:11px">${g?.group_code||t.account_reference||'â€”'}</code></td>
+              <td><b>${g?.name||' - '}</b></td>
+              <td><code style="font-family:monospace;font-size:11px">${g?.group_code||t.account_reference||' - '}</code></td>
               <td>${formatSender(t)}</td>
               <td class="num"><b style="color:var(--success)">${KES(t.amount)}</b></td>
-              <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'â€”'}</code></td>
+              <td><code style="font-family:monospace;font-size:11px">${t.trans_id||' - '}</code></td>
               <td>${linked
-                ?`<span class="badge b-green">âœ“ ${KES(linked.grand_total)} on ${fmtDate(linked.meeting_date)}</span>`
+                ?`<span class="badge b-green"> ${KES(linked.grand_total)} on ${fmtDate(linked.meeting_date)}</span>`
                 :`<span class="badge b-grey">Not yet logged</span>`}</td>
             </tr>`;
           }).join(''):`<tr><td colspan="7"><div class="empty"><h4>No group remittances</h4><p>When the chairman sends the day's total to the Paybill using the group's M-Pesa code, it will appear here.</p></div></td></tr>`}
@@ -5816,7 +5801,7 @@ function pageMpesaPayments(){
       </table>
     </div>
     <p class="muted" style="font-size:12px;margin-top:8px">
-      ðŸ’¡ When logging a remittance under <b>Remittances â†’ Log remittance</b>, paste the M-Pesa Receipt number into the "M-Pesa reference" field so it auto-links here.
+      Tip:  When logging a remittance under <b>Remittances -> Log remittance</b>, paste the M-Pesa Receipt number into the "M-Pesa reference" field so it auto-links here.
     </p>`:''}
 
     ${tab==='individual'?`
@@ -5832,18 +5817,18 @@ function pageMpesaPayments(){
             const g = state.data.groups.find(x=>x.id===t.group_id);
             return `<tr>
               <td style="font-size:12px">${formatMpesaDateTime(t)}</td>
-              <td><b>${mem?.full_name||'â€”'}</b></td>
-              <td>${g?.name||'â€”'}</td>
+              <td><b>${mem?.full_name||' - '}</b></td>
+              <td>${g?.name||' - '}</td>
               <td>${formatSender(t)}</td>
               <td class="num"><b>${KES(t.amount)}</b></td>
-              <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'â€”'}</code></td>
+              <td><code style="font-family:monospace;font-size:11px">${t.trans_id||' - '}</code></td>
               <td>${t.status==='allocated'
-                ?`<span class="badge b-green">âœ“ Allocated</span>`
+                ?`<span class="badge b-green"> Allocated</span>`
                 :`<span class="badge b-yellow">Pending</span>`}</td>
-              <td>${t.status==='allocated'?'â€”'
+              <td>${t.status==='allocated'?' - '
                 :`<button class="btn btn-sm btn-primary" onclick="openAllocateMpesaPayment('${t.id}')">Allocate</button>`}</td>
             </tr>`;
-          }).join(''):`<tr><td colspan="8"><div class="empty"><h4>No individual payments</h4><p>This list should normally be empty â€” members pay through the chairman/treasurer at the weekly meeting.</p></div></td></tr>`}
+          }).join(''):`<tr><td colspan="8"><div class="empty"><h4>No individual payments</h4><p>This list should normally be empty - members pay through the chairman/treasurer at the weekly meeting.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>`:''}
@@ -5858,10 +5843,10 @@ function pageMpesaPayments(){
         <tbody>
           ${unmatched.length?unmatched.map(t=>`<tr>
             <td style="font-size:12px">${formatMpesaDateTime(t)}</td>
-            <td><code style="font-family:monospace;font-size:12px">${t.account_reference||'â€”'}</code></td>
+            <td><code style="font-family:monospace;font-size:12px">${t.account_reference||' - '}</code></td>
             <td>${formatSender(t)}</td>
             <td class="num"><b>${KES(t.amount)}</b></td>
-            <td><code style="font-family:monospace;font-size:11px">${t.trans_id||'â€”'}</code></td>
+            <td><code style="font-family:monospace;font-size:11px">${t.trans_id||' - '}</code></td>
             <td><button class="btn btn-sm btn-outline" onclick="openManualMatchMpesa('${t.id}')">Match manually</button></td>
           </tr>`).join(''):`<tr><td colspan="6"><div class="empty"><h4>No unmatched payments</h4><p>Every incoming payment matched a group code.</p></div></td></tr>`}
         </tbody>
@@ -5883,8 +5868,7 @@ function pageMpesaPayments(){
       const matches = visibleGroups.filter(g => !q || g.name.toLowerCase().includes(q.toLowerCase()));
       grpDrop.innerHTML = [
         `<div style="padding:8px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text-muted)"
-          onmousedown="state._mpesaGroupFilter='';pageMpesaPayments()">All Groups</div>`,
-        ...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
+          onmousedown="state._mpesaGroupFilter='';pageMpesaPayments()">All Groups</div>`,...matches.map(g=>`<div style="padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)"
           onmousedown="state._mpesaGroupFilter='${g.id}';pageMpesaPayments()">${g.name}
           ${g.group_code?`<span style='font-size:10px;color:var(--text-muted);margin-left:6px'>${g.group_code}</span>`:''}
         </div>`)
@@ -5907,24 +5891,24 @@ function openAllocateMpesaPayment(txnId){
 
   const isAdmin = state.staff.role === 'admin';
   modal({
-    title:`Allocate M-Pesa Payment â€” ${mem?.full_name||'Unknown'}`,
+    title:`Allocate M-Pesa Payment - ${mem?.full_name||'Unknown'}`,
     body:`
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px;font-size:13px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem?.full_name||'â€”'}</div></div>
-          <div><div class="muted" style="font-size:11px">Group</div><div style="font-weight:600">${g?.name||'â€”'}</div></div>
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem?.full_name||' - '}</div></div>
+          <div><div class="muted" style="font-size:11px">Group</div><div style="font-weight:600">${g?.name||' - '}</div></div>
           <div><div class="muted" style="font-size:11px">Amount paid</div><div style="font-weight:700;color:var(--success)">${KES(t.amount)}</div></div>
-          <div><div class="muted" style="font-size:11px">M-Pesa Receipt</div><div style="font-family:monospace;font-size:12px">${t.trans_id||'â€”'}</div></div>
+          <div><div class="muted" style="font-size:11px">M-Pesa Receipt</div><div style="font-family:monospace;font-size:12px">${t.trans_id||' - '}</div></div>
         </div>
       </div>
       ${!isAdmin ? `
       <div style="background:var(--warning-50,#fffbeb);border:1px solid var(--warning);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:14px;font-size:12px">
-        â„¹ï¸ This will be saved as <b>pending</b> and reviewed by an admin before it counts toward the member's balance â€” the same as any meeting entry you record.
+        Note:  This will be saved as <b>pending</b> and reviewed by an admin before it counts toward the member's balance - the same as any meeting entry you record.
       </div>` : ''}
       <div class="field">
         <label>Allocate this payment as *</label>
         <select id="mp-alloc-type" onchange="mpAllocTypeChanged()">
-          <option value="">â€” Select â€”</option>
+          <option value=""> -  Select  - </option>
           <option value="savings">Savings deposit</option>
           ${myLoans.length ? `<option value="repayment">Loan repayment</option>` : ''}
         </select>
@@ -5932,7 +5916,7 @@ function openAllocateMpesaPayment(txnId){
       <div id="mp-loan-wrap" style="display:none" class="field">
         <label>Select loan</label>
         <select id="mp-loan-id">
-          ${myLoans.map(l=>`<option value="${l.id}">${l.asset_name} â€” outstanding ${KES(Math.max(0,Number(l.total_payable)-loanPaid(l.id)))}</option>`).join('')}
+          ${myLoans.map(l=>`<option value="${l.id}">${l.asset_name} - outstanding ${KES(Math.max(0,Number(l.total_payable)-loanPaid(l.id)))}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -5992,7 +5976,7 @@ function openAllocateMpesaPayment(txnId){
           await markMpesaTxnAllocated(t.id, 'pb_repayments', data.id);
           closeModal(); render();
           toast(useAmount < amount
-            ? `Payment allocated. Note: only ${KES(useAmount)} of ${KES(amount)} was applied (loan balance cleared) â€” remainder may need a separate savings entry.`
+            ? `Payment allocated. Note: only ${KES(useAmount)} of ${KES(amount)} was applied (loan balance cleared) - remainder may need a separate savings entry.`
             : 'Payment allocated to Loan Repayment.', 'success');
         }
       }}
@@ -6021,17 +6005,17 @@ function openManualMatchMpesa(txnId){
     title:'Match payment manually',
     body:`
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
-        Account ref typed: <code>${t.account_reference||'â€”'}</code> Â· Phone: ${t.msisdn||'â€”'} Â· Amount: <b>${KES(t.amount)}</b>
+        Account ref typed: <code>${t.account_reference||' - '}</code> - Phone: ${t.msisdn||' - '} - Amount: <b>${KES(t.amount)}</b>
       </div>
       <div class="field"><label>Group *</label>
         <select id="mm-group">
-          <option value="">â€” Select group â€”</option>
+          <option value=""> -  Select group  - </option>
           ${state.data.groups.map(g=>`<option value="${g.id}">${g.name} (${g.group_code||'no code'})</option>`).join('')}
         </select>
       </div>
-      <div class="field"><label>Member (optional â€” leave blank if this is the chairman's bulk remittance)</label>
+      <div class="field"><label>Member (optional - leave blank if this is the chairman's bulk remittance)</label>
         <select id="mm-member">
-          <option value="">â€” Bulk group remittance â€”</option>
+          <option value=""> -  Bulk group remittance  - </option>
           ${state.data.members.map(m=>`<option value="${m.id}" data-group="${m.group_id}">${m.full_name}</option>`).join('')}
         </select>
       </div>
@@ -6140,7 +6124,7 @@ function pageAccounting(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px">
       <div class="kpi k-success"><div class="l">Savings collected</div><div class="v">${KES(totalSavingsIn)}</div><div class="d">${savingsInPeriod.length} entries</div></div>
       <div class="kpi k-primary"><div class="l">Loan repayments</div><div class="v">${KES(totalRepayIn)}</div><div class="d">Interest ${KES(totalInterestIn)}</div></div>
-      <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${uniqueRegMembers.size} member(s) Â· ${regInstallmentsInPeriod.length} installment(s)</div></div>
+      <div class="kpi k-success"><div class="l">Registration fees</div><div class="v">${KES(totalRegFees)}</div><div class="d">${uniqueRegMembers.size} member(s) - ${regInstallmentsInPeriod.length} installment(s)</div></div>
       <div class="kpi k-success"><div class="l">Asset deposits</div><div class="v">${KES(totalDepositsIn)}</div><div class="d">${depositInstallmentsInPeriod.length} installment(s)</div></div>
       <div class="kpi k-warn"><div class="l">Principal disbursed</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
       <div class="kpi k-primary"><div class="l">Expected return</div><div class="v">${KES(totalExpectedReturn)}</div><div class="d">Interest: ${KES(totalExpectedReturn-totalLoansOut)}</div></div>
@@ -6159,10 +6143,10 @@ function pageAccounting(){
           <tr><td style="padding:6px 0;color:var(--text-muted)">Registration fee installments (${uniqueRegMembers.size} member(s))</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalRegFees)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Asset deposit installments</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalDepositsIn)}</td></tr>
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn)}</td></tr>
-          <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">âˆ’${KES(totalPurchasesOut)}</td></tr>
-          <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">âˆ’${KES(totalLoansOut)}</td></tr>
-          <tr><td style="padding:6px 0;color:var(--text-muted)">Operational expenses (${expensesInPeriod.length})</td><td style="text-align:right;font-weight:600;color:var(--danger)">âˆ’${KES(totalExpensesOut)}</td></tr>
-          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">âˆ’${KES(totalPurchasesOut+totalLoansOut+totalExpensesOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalPurchasesOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalLoansOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Operational expenses (${expensesInPeriod.length})</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalExpensesOut)}</td></tr>
+          <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">-${KES(totalPurchasesOut+totalLoansOut+totalExpensesOut)}</td></tr>
           <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn-totalPurchasesOut-totalLoansOut-totalExpensesOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn-totalPurchasesOut-totalLoansOut-totalExpensesOut)}</td></tr>
         </table>
       </div>
@@ -6250,7 +6234,7 @@ function pageExpenses(){
 
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Expenses</h1><div class="desc">${filtered.length} entries Â· Total ${KES(totalAmt)}</div></div>
+      <div><h1>Expenses</h1><div class="desc">${filtered.length} entries - Total ${KES(totalAmt)}</div></div>
       <div class="actions">
         ${isAdmin ? `<button class="btn btn-primary" onclick="openExpenseForm()">+ Record Expense</button>` : ''}
       </div>
@@ -6279,11 +6263,11 @@ function pageExpenses(){
             };
             return `<tr>
               <td>${fmtDate(e.date)}</td>
-              <td><span class="badge ${catColors[e.category]||'b-grey'}">${e.category||'â€”'}</span></td>
-              <td style="max-width:260px;white-space:normal;font-size:13px">${e.description||'â€”'}</td>
+              <td><span class="badge ${catColors[e.category]||'b-grey'}">${e.category||' - '}</span></td>
+              <td style="max-width:260px;white-space:normal;font-size:13px">${e.description||' - '}</td>
               <td class="num"><b>${KES(e.amount)}</b></td>
-              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'â€”'}</td>
-              <td><button class="act-btn" onclick="expenseActions(event,'${e.id}')">Â·Â·Â·</button></td>
+              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||' - '}</td>
+              <td><button class="act-btn" onclick="expenseActions(event,'${e.id}')"> - - - </button></td>
             </tr>`;
           }).join('') : `<tr><td colspan="6"><div class="empty"><h4>No expenses found</h4><p>No expense entries for the selected period.${isAdmin?' Use "Record Expense" to add one.':''}</p></div></td></tr>`}
         </tbody>
@@ -6300,7 +6284,7 @@ function pageExpenses(){
 function expenseActions(ev, id){
   const isAdmin = state.staff.role === 'admin';
   const items = [
-    { label: 'âœ Edit Expense', onClick: () => openExpenseForm(id) },
+    { label: 'Edit  Edit Expense', onClick: () => openExpenseForm(id) },
   ];
   if(isAdmin){
     items.push('sep');
@@ -6349,7 +6333,7 @@ function openExpenseForm(id=null){
       </div>
       <div class="field">
         <label>Description</label>
-        <textarea id="ef-description" rows="3" placeholder="Brief description of what this expense was forâ€¦" style="resize:vertical">${existing?.description||''}</textarea>
+        <textarea id="ef-description" rows="3" placeholder="Brief description of what this expense was for..." style="resize:vertical">${existing?.description||''}</textarea>
       </div>
     `,
     actions: [
@@ -6456,9 +6440,9 @@ function pageSavings(){
 
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Savings Ledger</h1><div class="desc">${filtered.length} entries Â· Total ${KES(totalAmt)}</div></div>
+      <div><h1>Savings Ledger</h1><div class="desc">${filtered.length} entries - Total ${KES(totalAmt)}</div></div>
       <div class="actions">
-        <button class="btn btn-outline" onclick="exportSavingsFiltered()">â¬‡ Export to Excel</button>
+        <button class="btn btn-outline" onclick="exportSavingsFiltered()"> Export to Excel</button>
       </div>
     </div>
 
@@ -6480,7 +6464,7 @@ function pageSavings(){
         <option value="">All Officers</option>
         ${officers.map(o=>`<option value="${o.id}" ${_savingsOfficerFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
       </select>` : ''}
-      ${(_savingsGroupFilter||_savingsOfficerFilter)?`<button class="btn btn-sm btn-ghost" onclick="_savingsGroupFilter='';_savingsOfficerFilter='';pageSavings()">âœ• Clear filters</button>`:''}
+      ${(_savingsGroupFilter||_savingsOfficerFilter)?`<button class="btn btn-sm btn-ghost" onclick="_savingsGroupFilter='';_savingsOfficerFilter='';pageSavings()">Clear  Clear filters</button>`:''}
     </div>
 
     <div class="table-wrap">
@@ -6496,13 +6480,13 @@ function pageSavings(){
             const isPending = s.status === 'pending';
             return `<tr${isPending ? ' style="background:var(--warning-50)"' : ''}>
               <td>${fmtDate(s.meeting_date)}</td>
-              <td><b>${mem?.full_name||'â€”'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
-              <td>${grp?.name||'â€”'}</td>
-              <td class="num"><b>${KES(s.amount)}</b>${s.edit_notes?`<div class="muted" style="font-size:10px" title="${s.edit_notes}">âœ edited</div>`:''}
+              <td><b>${mem?.full_name||' - '}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
+              <td>${grp?.name||' - '}</td>
+              <td class="num"><b>${KES(s.amount)}</b>${s.edit_notes?`<div class="muted" style="font-size:10px" title="${s.edit_notes}">Edit  edited</div>`:''}
               </td>
               <td>${isPending ? '<span class="badge b-yellow">Pending Admin Approval</span>' : '<span class="badge b-green">Approved</span>'}</td>
-              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'â€”'}</td>
-              <td><button class="act-btn" onclick="savingsRowActions(event,'${s.id}')">Â·Â·Â·</button></td>
+              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||' - '}</td>
+              <td><button class="act-btn" onclick="savingsRowActions(event,'${s.id}')"> - - - </button></td>
             </tr>`;
           }).join('') : `<tr><td colspan="7"><div class="empty"><h4>No savings found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
         </tbody>
@@ -6521,11 +6505,11 @@ function savingsRowActions(ev, id){
   const isAdmin = state.staff.role === 'admin';
   const isOfficer = state.staff.role === 'officer';
   const items = [
-    { label: 'âœ Edit entry', onClick: () => openEditSaving(id) }
+    { label: 'Edit  Edit entry', onClick: () => openEditSaving(id) }
   ];
   if(isAdmin && sav && sav.status === 'pending'){
     items.push('sep');
-    items.push({ label: 'âœ“ Approve', onClick: async () => {
+    items.push({ label: ' Approve', onClick: async () => {
       const { error } = await sb.from('pb_savings').update({ status: 'approved' }).eq('id', id);
       if(error) return toast(error.message, 'error');
       sav.status = 'approved';
@@ -6535,7 +6519,7 @@ function savingsRowActions(ev, id){
   }
   if(isAdmin || isOfficer){
     items.push('sep');
-    items.push({ label: 'ðŸ—‘ Delete entry', danger: true, onClick: () => confirmDialog(
+    items.push({ label: ' Delete entry', danger: true, onClick: () => confirmDialog(
       'Delete this savings entry? This cannot be undone.',
       async () => {
         if(!(await ensureFreshToken())) return;
@@ -6574,7 +6558,7 @@ function exportSavingsFiltered(){
     const mem = state.data.members.find(x=>x.id===s.member_id);
     const grp = state.data.groups.find(x=>x.id===s.group_id);
     const rec = state.data.staff.find(x=>x.id===s.recorded_by);
-    return { Date: s.meeting_date, Member: mem?.full_name||'â€”', Group: grp?.name||'â€”', Amount: Number(s.amount), 'Recorded By': rec?.full_name||'â€”' };
+    return { Date: s.meeting_date, Member: mem?.full_name||' - ', Group: grp?.name||' - ', Amount: Number(s.amount), 'Recorded By': rec?.full_name||' - ' };
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Savings');
@@ -6648,9 +6632,9 @@ function pageRepayments(){
 
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Repayments Register</h1><div class="desc">${filtered.length} entries Â· Total ${KES(totalAmt)} Â· Principal ${KES(totalPrincipal)} Â· Interest ${KES(totalInterest)}</div></div>
+      <div><h1>Repayments Register</h1><div class="desc">${filtered.length} entries - Total ${KES(totalAmt)} - Principal ${KES(totalPrincipal)} - Interest ${KES(totalInterest)}</div></div>
       <div class="actions">
-        <button class="btn btn-outline" onclick="exportRepaymentsFiltered()">â¬‡ Export to Excel</button>
+        <button class="btn btn-outline" onclick="exportRepaymentsFiltered()"> Export to Excel</button>
       </div>
     </div>
 
@@ -6672,7 +6656,7 @@ function pageRepayments(){
         <option value="">All Officers</option>
         ${officers.map(o=>`<option value="${o.id}" ${_repOfficerFilter===o.id?'selected':''}>${o.full_name}</option>`).join('')}
       </select>` : ''}
-      ${(_repGroupFilter||_repOfficerFilter)?`<button class="btn btn-sm btn-ghost" onclick="_repGroupFilter='';_repOfficerFilter='';pageRepayments()">âœ• Clear filters</button>`:''}
+      ${(_repGroupFilter||_repOfficerFilter)?`<button class="btn btn-sm btn-ghost" onclick="_repGroupFilter='';_repOfficerFilter='';pageRepayments()">Clear  Clear filters</button>`:''}
     </div>
 
     <div class="table-wrap">
@@ -6691,16 +6675,16 @@ function pageRepayments(){
             const isPending = r.status === 'pending';
             return `<tr${isPending ? ' style="background:var(--warning-50)"' : ''}>
               <td>${fmtDate(r.meeting_date)}</td>
-              <td class="sticky-name"><b>${mem?.full_name||'—'}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
-              <td>${grp?.name||'â€”'}</td>
-              <td style="font-size:12px">${ln?.asset_name||'â€”'}</td>
-              <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?`<div class="muted" style="font-size:10px" title="${r.edit_notes}">âœ edited</div>`:''}
+              <td class="sticky-name"><b>${mem?.full_name||' - '}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
+              <td>${grp?.name||' - '}</td>
+              <td style="font-size:12px">${ln?.asset_name||' - '}</td>
+              <td class="num"><b>${KES(r.amount)}</b>${r.edit_notes?`<div class="muted" style="font-size:10px" title="${r.edit_notes}">Edit  edited</div>`:''}
               </td>
               <td class="num">${KES(r.principal)}</td>
               <td class="num" style="color:var(--warning)">${KES(r.interest)}</td>
               <td>${isPending ? '<span class="badge b-yellow">Pending Admin Approval</span>' : '<span class="badge b-green">Approved</span>'}</td>
-              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||'â€”'}</td>
-              <td><button class="act-btn" onclick="repRowActions(event,'${r.id}')">Â·Â·Â·</button></td>
+              <td style="font-size:12px;color:var(--text-muted)">${rec?.full_name||' - '}</td>
+              <td><button class="act-btn" onclick="repRowActions(event,'${r.id}')"> - - - </button></td>
             </tr>`;
           }).join('') : `<tr><td colspan="10"><div class="empty"><h4>No repayments found</h4><p>Try adjusting the date or filters.</p></div></td></tr>`}
         </tbody>
@@ -6719,11 +6703,11 @@ function repRowActions(ev, id){
   const isAdmin = state.staff.role === 'admin';
   const isOfficer = state.staff.role === 'officer';
   const items = [
-    { label: 'âœ Edit entry', onClick: () => openEditRepayment(id) }
+    { label: 'Edit  Edit entry', onClick: () => openEditRepayment(id) }
   ];
   if(isAdmin && rep && rep.status === 'pending'){
     items.push('sep');
-    items.push({ label: 'âœ“ Approve', onClick: async () => {
+    items.push({ label: ' Approve', onClick: async () => {
       const { error } = await sb.from('pb_repayments').update({ status: 'approved' }).eq('id', id);
       if(error) return toast(error.message, 'error');
       rep.status = 'approved';
@@ -6733,7 +6717,7 @@ function repRowActions(ev, id){
   }
   if(isAdmin || isOfficer){
     items.push('sep');
-    items.push({ label: 'ðŸ—‘ Delete entry', danger: true, onClick: () => confirmDialog(
+    items.push({ label: ' Delete entry', danger: true, onClick: () => confirmDialog(
       'Delete this repayment entry? This cannot be undone.',
       async () => {
         if(!(await ensureFreshToken())) return;
@@ -6775,13 +6759,13 @@ function exportRepaymentsFiltered(){
     const rec = state.data.staff.find(x=>x.id===r.recorded_by);
     return {
       Date: r.meeting_date,
-      Member: mem?.full_name||'â€”',
-      Group: grp?.name||'â€”',
-      'Loan Asset': ln?.asset_name||'â€”',
+      Member: mem?.full_name||' - ',
+      Group: grp?.name||' - ',
+      'Loan Asset': ln?.asset_name||' - ',
       'Total Amount': Number(r.amount),
       Principal: Number(r.principal),
       Interest: Number(r.interest),
-      'Recorded By': rec?.full_name||'â€”'
+      'Recorded By': rec?.full_name||' - '
     };
   });
   const wb = XLSX.utils.book_new();
@@ -6821,7 +6805,7 @@ function openCollectionSheetModal(){
     `,
     actions: [
       { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
-      { label: 'ðŸ“‹ Export Excel', cls: 'btn-primary', onClick: () => {
+      { label: ' Export Excel', cls: 'btn-primary', onClick: () => {
         const dateVal = document.getElementById('cs-date')?.value || todayISO();
         const officerVal = document.getElementById('cs-officer')?.value || '';
         closeModal();
@@ -6881,10 +6865,10 @@ function downloadCollectionSheet(targetDate, officerFilter){
     const todayExpected = loanExpectedCollectionAsOf(l, targetDate);
 
     return {
-      'Client ID': m?.national_id || 'â€”',
-      'Client Name': m?.full_name || 'â€”',
-      'Group': g?.name || 'â€”',
-      'Officer': off?.full_name || 'â€”',
+      'Client ID': m?.national_id || ' - ',
+      'Client Name': m?.full_name || ' - ',
+      'Group': g?.name || ' - ',
+      'Officer': off?.full_name || ' - ',
       'Loan Product (Asset)': l.asset_name,
       'Outstanding Balance': Number(outstanding.toFixed(2)),
       'Installment Amount': weekly,
@@ -6892,7 +6876,7 @@ function downloadCollectionSheet(targetDate, officerFilter){
       'Expected Today': Number(todayExpected.toFixed(2)),
       'Paid Installments': paidInstallments,
       'Unpaid Installments': unpaidInstallments,
-      'Expected End Date': l.expected_end_date || 'â€”',
+      'Expected End Date': l.expected_end_date || ' - ',
       'Amount Collected': ''  // blank column for manual fill-in during collection
     };
   });
@@ -6902,7 +6886,7 @@ function downloadCollectionSheet(targetDate, officerFilter){
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, `${dow} Collection`);
   XLSX.writeFile(wb, `collection_sheet_${dow}_${targetDate}.xlsx`);
-  toast(`Collection sheet exported â€” ${rows.length} loan${rows.length!==1?'s':''} for ${dow} (${targetDate}).`, 'success');
+  toast(`Collection sheet exported - ${rows.length} loan${rows.length!==1?'s':''} for ${dow} (${targetDate}).`, 'success');
 }
 
 /* =====================================================================
@@ -6919,11 +6903,11 @@ function openStandaloneRepayment(loanId, memberId){
   const expectedNow = loanExpectedCollectionAsOf(ln);
 
   modal({
-    title: `Record Repayment â€” ${ln.asset_name}`,
+    title: `Record Repayment - ${ln.asset_name}`,
     body: `
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem?.full_name||'â€”'}</div></div>
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem?.full_name||' - '}</div></div>
           <div><div class="muted" style="font-size:11px">Asset</div><div style="font-weight:600">${ln.asset_name}</div></div>
           <div><div class="muted" style="font-size:11px">Weekly installment</div><div style="font-weight:600">${KES(ln.weekly_installment)}</div></div>
           <div><div class="muted" style="font-size:11px">Expected now</div><div style="font-weight:600;color:var(--warning)">${KES(expectedNow)}</div></div>
@@ -7015,7 +6999,7 @@ function openEditSaving(savingId){
     title: 'Edit Savings Entry',
     body: `
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
-        <div><span class="muted">Member: </span><b>${mem?.full_name||'â€”'}</b></div>
+        <div><span class="muted">Member: </span><b>${mem?.full_name||' - '}</b></div>
         <div><span class="muted">Date: </span><b>${fmtDate(sv.meeting_date)}</b></div>
         <div><span class="muted">Original amount: </span><b>${KES(sv.amount)}</b></div>
       </div>
@@ -7073,8 +7057,8 @@ function openEditRepayment(repaymentId){
     title: 'Edit Repayment Entry',
     body: `
       <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:14px;font-size:13px">
-        <div><span class="muted">Member: </span><b>${mem?.full_name||'â€”'}</b></div>
-        <div><span class="muted">Loan: </span><b>${ln?.asset_name||'â€”'}</b></div>
+        <div><span class="muted">Member: </span><b>${mem?.full_name||' - '}</b></div>
+        <div><span class="muted">Loan: </span><b>${ln?.asset_name||' - '}</b></div>
         <div><span class="muted">Date: </span><b>${fmtDate(rep.meeting_date)}</b></div>
         <div><span class="muted">Original amount: </span><b>${KES(rep.amount)}</b></div>
       </div>
