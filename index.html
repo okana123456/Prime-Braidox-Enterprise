@@ -765,6 +765,46 @@ function memberLoan(memberId){
 function loanPaid(loanId){
   return state.data.repayments.filter(r=>r.loan_id===loanId && r.status!=='pending').reduce((a,b)=>a + Number(b.amount||0), 0);
 }
+function loanPerformance(loan){
+  if(!loan) return { score:null, label:'No active loan', badgeClass:'b-grey', summary:'No active loan to rate.', progressPct:0, arrears:0, outstanding:0 };
+  const paid = loanPaid(loan.id);
+  const totalPayable = Number(loan.total_payable || 0);
+  const weekly = Number(loan.weekly_installment || 0);
+  const outstanding = Math.max(0, totalPayable - paid);
+  const startDate = new Date(loan.start_date);
+  const today = new Date(todayISO());
+  const msPerWeek = 7 * 24 * 3600 * 1000;
+  const weeksElapsed = Number.isNaN(startDate.getTime()) ? 0 : Math.max(0, Math.floor((today - startDate) / msPerWeek));
+  const expectedPaid = Math.min(weeksElapsed * weekly, totalPayable);
+  const arrears = Math.max(0, expectedPaid - paid);
+  const score = expectedPaid > 0 ? Math.min(100, Math.round((paid / expectedPaid) * 100)) : 100;
+  const progressPct = totalPayable > 0 ? Math.min(100, Math.round((paid / totalPayable) * 100)) : 0;
+  let label = 'Poor', badgeClass = 'b-red';
+  if(loan.status === 'completed' && outstanding <= 0){
+    label = 'Excellent'; badgeClass = 'b-green';
+  }else if(loan.status === 'defaulted'){
+    label = 'Poor'; badgeClass = 'b-red';
+  }else if(score >= 95 && arrears === 0){
+    label = 'Excellent'; badgeClass = 'b-green';
+  }else if(score >= 80){
+    label = 'Good'; badgeClass = 'b-blue';
+  }else if(score >= 60){
+    label = 'Fair'; badgeClass = 'b-yellow';
+  }
+  const summary = arrears > 0
+    ? `${score}% of expected payments made - ${KES(arrears)} behind`
+    : `${score}% of expected payments made - on track`;
+  return { paid, totalPayable, outstanding, expectedPaid, arrears, score, progressPct, label, badgeClass, summary };
+}
+function memberPerformance(memberId){
+  const loans = state.data.loans
+    .filter(l=>l.member_id===memberId)
+    .sort((a,b)=>new Date(b.start_date)-new Date(a.start_date));
+  if(!loans.length) return { score:null, label:'No loan history', badgeClass:'b-grey', summary:'No loan performance history yet.', source:'No loan' };
+  const active = loans.find(l=>l.status==='active');
+  const selected = active || loans[0];
+  return { ...loanPerformance(selected), loan:selected, source:active?'Active loan':'Latest loan' };
+}
 function memberEligible(memberId){
   const t = Number(state.settings?.savings_threshold || 900);
   return memberSavings(memberId) >= t;
@@ -2327,6 +2367,7 @@ function pageMemberProfile(){
   const allLoans = state.data.loans.filter(l=>l.member_id===m.id).sort((a,b)=>new Date(b.start_date)-new Date(a.start_date));
   const orders = state.data.orders.filter(o=>o.member_id===m.id).sort((a,b)=>new Date(b.ordered_on)-new Date(a.ordered_on));
   const repayments = state.data.repayments.filter(r=>r.member_id===m.id).sort((a,b)=>b.meeting_date.localeCompare(a.meeting_date));
+  const perf = memberPerformance(m.id);
   const tab = state._memberProfileTab || 'overview';
 
   const tabs = [
@@ -2353,6 +2394,7 @@ function pageMemberProfile(){
       <div class="kpi k-success"><div class="l">Total savings</div><div class="v">${KES(totalSv)}</div><div class="d">${memberEligible(m.id)?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Below threshold</span>'}${sv.filter(s=>s.status==='pending').length>0?`<span class="badge b-yellow" style="margin-left:4px">${sv.filter(s=>s.status==='pending').length} pending</span>`:''}</div></div>
       <div class="kpi k-primary"><div class="l">Active loan</div><div class="v">${ln?KES(ln.loan_value):'—'}</div><div class="d">${ln?'Outstanding '+KES(Number(ln.total_payable)-loanPaid(ln.id)):'No active loan'}</div></div>
       <div class="kpi"><div class="l">Total repaid</div><div class="v">${KES(repayments.filter(r=>r.status!=='pending').reduce((a,b)=>a+Number(b.amount||0),0))}</div><div class="d">${repayments.filter(r=>r.status!=='pending').length} approved entries${repayments.filter(r=>r.status==='pending').length>0?` · <span style="color:var(--warning)">${repayments.filter(r=>r.status==='pending').length} pending</span>`:''}</div></div>
+      <div class="kpi"><div class="l">Client performance rating</div><div class="v" style="font-size:18px">${perf.score===null?'â€”':perf.score+'%'}</div><div class="d"><span class="badge ${perf.badgeClass}">${perf.label}</span> <span class="muted">${perf.source}</span></div></div>
       <div class="kpi k-warn"><div class="l">Member since</div><div class="v" style="font-size:16px">${fmtDate(m.registered_on)}</div></div>
     </div>
 
@@ -2365,6 +2407,14 @@ function pageMemberProfile(){
       ${tab==='overview' ? `
         <div class="grid-2">
           <div class="card card-pad">
+            <h3 style="margin:0 0 12px">Client performance rating</h3>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+              <span class="badge ${perf.badgeClass}" style="font-size:12px">${perf.label}</span>
+              <strong>${perf.score===null?'No score yet':perf.score+'%'}</strong>
+              <span class="muted" style="font-size:12px">${perf.source}</span>
+            </div>
+            <p class="muted" style="margin:0 0 14px;font-size:13px">${perf.summary}</p>
+            ${perf.loan ? `<div style="height:8px;background:var(--border);border-radius:99px;overflow:hidden;margin-bottom:14px"><div style="height:100%;width:${perf.progressPct}%;background:var(--success);border-radius:99px"></div></div>` : ''}
             <h3 style="margin:0 0 12px">Personal details</h3>
             <table style="width:100%;font-size:13px;border-collapse:collapse">
               ${[
@@ -2451,12 +2501,16 @@ function pageMemberProfile(){
           const paid = loanPaid(l.id);
           const outstanding = Number(l.total_payable||0) - paid;
           const pct = Math.min(100, Math.round(paid/Number(l.total_payable||1)*100));
+          const loanPerf = loanPerformance(l);
           const schedule = computeSchedule(Number(l.loan_value), Number(l.weekly_installment), 'flat', new Date(l.start_date));
           const today = todayISO();
           return `<div class="card" style="margin-bottom:14px">
             <div class="card-head">
               <h3>${l.asset_name} ${l.asset_quantity>1?'× '+l.asset_quantity:''}</h3>
-              <span class="badge ${l.status==='active'?'b-blue':'b-grey'}">${l.status}</span>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <span class="badge ${loanPerf.badgeClass}">${loanPerf.label} ${loanPerf.score}%</span>
+                <span class="badge ${l.status==='active'?'b-blue':'b-grey'}">${l.status}</span>
+              </div>
             </div>
             <div class="card-pad">
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:14px">
@@ -2467,6 +2521,7 @@ function pageMemberProfile(){
                 <div><div class="muted" style="font-size:11px">Expected end</div><div style="font-weight:600">${fmtDate(l.expected_end_date)}</div></div>
                 <div><div class="muted" style="font-size:11px">Paid</div><div style="font-weight:600;color:var(--success)">${KES(paid)}</div></div>
                 <div><div class="muted" style="font-size:11px">Outstanding</div><div style="font-weight:600;color:var(--danger)">${KES(outstanding)}</div></div>
+                <div><div class="muted" style="font-size:11px">Performance</div><div style="font-weight:600">${loanPerf.score}% - ${loanPerf.label}</div><div class="muted" style="font-size:11px">${loanPerf.arrears>0?KES(loanPerf.arrears)+' behind':'On track'}</div></div>
               </div>
               <div style="margin-bottom:14px">
                 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span>Repayment progress</span><span>${pct}%</span></div>
@@ -3239,7 +3294,7 @@ function pageLoans(){
       <table class="tbl">
         <thead><tr>
           <th>Member</th><th>Group</th><th>Asset</th>${isAdmin?'<th>Officer</th>':''}<th>Start Date</th><th class="num">Loan value</th>
-          <th class="num">Weekly</th><th class="num">Paid</th><th class="num">Outstanding</th>
+          <th class="num">Weekly</th><th class="num">Paid</th><th class="num">Outstanding</th><th>Performance</th>
           <th>Status</th><th></th>
         </tr></thead>
         <tbody>
@@ -3249,6 +3304,7 @@ function pageLoans(){
             const off = state.data.staff.find(x=>x.id===l.officer_id);
             const paid = loanPaid(l.id);
             const out = Number(l.total_payable)-paid;
+            const perf = loanPerformance(l);
             const bcls = l.status==='completed'?'b-grey':l.status==='defaulted'?'b-red':'b-blue';
             return `<tr style="${l.status==='completed'?'background:var(--surface-2);color:var(--text-muted)':l.status==='defaulted'?'background:var(--danger-50)':''}">
               <td><b>${m?.full_name||'—'}</b></td>
@@ -3260,10 +3316,11 @@ function pageLoans(){
               <td class="num">${KES(l.weekly_installment)}</td>
               <td class="num">${KES(paid)}</td>
               <td class="num">${KES(out)}</td>
+              <td><span class="badge ${perf.badgeClass}">${perf.label} ${perf.score}%</span></td>
               <td><span class="badge ${bcls}">${l.status}</span></td>
               <td><button class="act-btn" onclick="loanActions(event,'${l.id}')">···</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="${isAdmin?11:10}"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="${isAdmin?12:11}"><div class="empty"><h4>No loans found</h4><p>Loans are created automatically when admins fulfill approved orders.</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -6565,14 +6622,14 @@ function downloadCollectionSheet(targetDate, officerFilter){
     const totalInstallments = weekly > 0 ? Math.ceil(totalPayable / weekly) : 0;
     const unpaidInstallments = Math.max(0, totalInstallments - paidInstallments);
 
-    // Calculate today's expected collection (arrears + today's installment)
+    // Calculate arrears for visibility, but do not roll missed installments
+    // into today's required collection. Officers collect the normal installment.
     const msPerWeek = 7 * 24 * 3600 * 1000;
     const startDate = new Date(l.start_date);
     const weeksElapsed = Math.max(0, Math.floor((localDate - startDate) / msPerWeek));
     const expectedPaid = Math.min(weeksElapsed * weekly, totalPayable);
     const arrears = Math.max(0, expectedPaid - paid);
-    // Today's collection = weekly installment + any arrears outstanding
-    const todayExpected = Math.min(weekly + arrears, outstanding);
+    const todayExpected = Math.min(weekly, outstanding);
 
     return {
       'Client ID': m?.national_id || '—',
