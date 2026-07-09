@@ -780,8 +780,25 @@ function memberDepositPaid(memberId){
 function memberLoan(memberId){
   return state.data.loans.find(l=>l.member_id===memberId && l.status==='active');
 }
-function loanPaid(loanId){
+function loanRepaymentPaid(loanId){
   return state.data.repayments.filter(r=>r.loan_id===loanId && r.status!=='pending').reduce((a,b)=>a + Number(b.amount||0), 0);
+}
+function loanDepositPaid(loan){
+  if(!loan || !loanDepositRequired(loan)) return 0;
+  const memberLoans = state.data.loans
+    .filter(l => l.member_id === loan.member_id && l.status === 'active' && loanDepositRequired(l) > 0)
+    .sort((a,b) => String(a.start_date||'').localeCompare(String(b.start_date||'')) || String(a.id).localeCompare(String(b.id)));
+  let availableDeposit = memberDepositPaid(loan.member_id);
+  for(const l of memberLoans){
+    const applied = Math.min(availableDeposit, loanDepositRequired(l));
+    if(l.id === loan.id) return applied;
+    availableDeposit = Math.max(0, availableDeposit - applied);
+  }
+  return 0;
+}
+function loanPaid(loanId){
+  const loan = state.data.loans.find(l=>l.id===loanId);
+  return loanRepaymentPaid(loanId) + loanDepositPaid(loan);
 }
 function localDateFromISO(dateStr){
   const s = (dateStr || '').slice(0,10);
@@ -4243,12 +4260,23 @@ function _updateOrderTotalSummary(){
 
 function openOrderForm(){
   _orderLines = [{ asset_id:'', asset_name:'', loan_price:0, stock:0, quantity:1 }];
+  const isAdmin = state.staff.role === 'admin';
+  const visibleOrderGroups = isAdmin
+    ? state.data.groups
+    : state.data.groups.filter(g => g.officer_id === state.staff.id);
   modal({
     title:'New member order',
     body:`
+      <div class="field">
+        <label>Filter group</label>
+        <select id="ord-group-filter" onchange="$('ord-mem-id').value='';$('ord-mem-search').value='';$('ord-mem-sel').textContent='';filterOrderMembers()">
+          <option value="">All visible groups</option>
+          ${visibleOrderGroups.map(g=>`<option value="${g.id}">${g.name}${g.group_code ? ' - '+g.group_code : ''}</option>`).join('')}
+        </select>
+      </div>
       <div class="field"><label>Member *</label>
         <div class="search-box" style="position:relative">
-          <input id="ord-mem-search" placeholder="Type member name..." autocomplete="off" style="padding-left:34px" oninput="filterOrderMembers()" />
+          <input id="ord-mem-search" placeholder="Type member name, phone, ID, or group..." autocomplete="off" style="padding-left:34px" oninput="filterOrderMembers()" />
           <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
         </div>
         <div id="ord-mem-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
@@ -4363,6 +4391,7 @@ function ordUpdateSummary(){
 }
 function filterOrderMembers(){
   const q = ($('ord-mem-search').value||'').toLowerCase().trim();
+  const groupFilter = $('ord-group-filter')?.value || '';
   const list = $('ord-mem-list'); if(!list) return;
   const isAdmin = state.staff.role === 'admin';
 
@@ -4376,11 +4405,15 @@ function filterOrderMembers(){
     if(m.status && m.status !== 'active') return false;
     // Officers only see members from their own assigned groups
     if(allowedGroupIds !== null && !allowedGroupIds.has(m.group_id)) return false;
+    if(groupFilter && m.group_id !== groupFilter) return false;
     // Must match the search query (name, national ID, or phone)
     if(!q) return true;
+    const group = state.data.groups.find(g => g.id === m.group_id);
+    const groupText = `${group?.name||''} ${group?.group_code||''}`.toLowerCase();
     return m.full_name.toLowerCase().includes(q)
       || (m.national_id||'').toLowerCase().includes(q)
-      || (m.phone||'').includes(q);
+      || (m.phone||'').includes(q)
+      || groupText.includes(q);
   }).slice(0, 15);
 
   if(!q && !matches.length){
@@ -4413,8 +4446,10 @@ function filterOrderMembers(){
   }).join('');
 }
 function selectOrderMember(id, name, groupName){
+  const member = state.data.members.find(m=>m.id===id);
   $('ord-mem-id').value = id;
   $('ord-mem-search').value = name;
+  if(member && $('ord-group-filter')) $('ord-group-filter').value = member.group_id || '';
   $('ord-mem-sel').textContent = groupName ? ' '+name+' - '+groupName : ' '+name;
   $('ord-mem-list').style.display = 'none';
 }
