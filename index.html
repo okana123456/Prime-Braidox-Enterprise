@@ -1665,6 +1665,9 @@ function pageDashboard(){
   const savings = state.data.savings.filter(s => inRangeFallback(s.meeting_date||'', s.created_at) && s.status !== 'pending');
   const repayments = state.data.repayments.filter(r => inRangeFallback(r.meeting_date||'', r.created_at) && r.status !== 'pending');
   const totalSavings = savings.reduce((a,b)=>a+Number(b.amount||0),0);
+  const allTimeSavings = state.data.savings
+    .filter(s => s.status !== 'pending' && (!s.type || s.type === 'savings'))
+    .reduce((a,b)=>a+Number(b.amount||0),0);
   const totalRepay = repayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const activeLoans = state.data.loans.filter(l=>l.status==='active');
   const outstandingBal = activeLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
@@ -1678,10 +1681,13 @@ function pageDashboard(){
   const officerPerf = officers.map(o => {
     const oSav = state.data.savings.filter(s=>s.recorded_by===o.id && inRangeFallback(s.meeting_date||'', s.created_at) && s.status !== 'pending').reduce((a,b)=>a+Number(b.amount||0),0);
     const oRep = state.data.repayments.filter(r=>r.recorded_by===o.id && inRangeFallback(r.meeting_date||'', r.created_at) && r.status !== 'pending').reduce((a,b)=>a+Number(b.amount||0),0);
-    const oLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active').reduce((a,b)=>a+Number(b.loan_value||0),0);
+    const activeOfficerLoans = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active');
+    const oLoans = activeOfficerLoans.reduce((a,b)=>a+Number(b.loan_value||0),0);
+    const oOutstanding = activeOfficerLoans.reduce((a,l)=>a+loanOutstanding(l),0);
+    const oArrears = activeOfficerLoans.reduce((a,l)=>a+loanArrearsAsOf(l),0);
     const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
     const oLoanValuePeriod = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active' && inRangeFallback(l.start_date, l.created_at)).reduce((a,b)=>a+Number(b.loan_value||0),0);
-    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, ordersToday: oOrdersToday, loanValuePeriod: oLoanValuePeriod };
+    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, activeLoanCount: activeOfficerLoans.length, outstanding: oOutstanding, arrears: oArrears, ordersToday: oOrdersToday, loanValuePeriod: oLoanValuePeriod };
   }).sort((a,b)=>b.savings-a.savings);
 
   const filterBtns = [
@@ -1700,8 +1706,9 @@ function pageDashboard(){
       <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageDashboard()" />`:''}
     </div>
 
-    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
       <div class="kpi k-primary"><div class="l">Savings collected</div><div class="v">${KES(totalSavings)}</div><div class="d">${savings.length} entries</div></div>
+      <div class="kpi k-success"><div class="l">All-time savings</div><div class="v">${KES(allTimeSavings)}</div><div class="d">approved savings only</div></div>
       <div class="kpi"><div class="l">Active loans outstanding</div><div class="v">${KES(outstandingBal)}</div><div class="d">${activeLoans.length} active loans</div></div>
       <div class="kpi k-success"><div class="l">Repayments received</div><div class="v">${KES(totalRepay)}</div><div class="d">Interest ${KES(interestEarned)}</div></div>
       <div class="kpi k-warn"><div class="l">Members</div><div class="v">${state.data.members.length}</div><div class="d">${eligibleCount} loan-eligible</div></div>
@@ -1754,6 +1761,23 @@ function pageDashboard(){
     </div>
 
     ${officerPerf.length ? `
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3>Officer loan portfolio</h3><div class="sub">Current active loan book by officer</div></div>
+      <div style="overflow-x:auto">
+        <table class="tbl">
+          <thead><tr><th>Officer</th><th class="num">Active loans</th><th class="num">Loan value</th><th class="num">Outstanding</th><th class="num">Arrears</th></tr></thead>
+          <tbody>
+            ${officerPerf.map(o=>`<tr>
+              <td><b>${o.name}</b></td>
+              <td class="num">${o.activeLoanCount}</td>
+              <td class="num">${KES(o.loans)}</td>
+              <td class="num" style="color:${o.outstanding>0?'var(--danger)':'inherit'}">${KES(o.outstanding)}</td>
+              <td class="num" style="color:${o.arrears>0?'var(--danger)':'inherit'}">${o.arrears>0?KES(o.arrears):' - '}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
     <div class="card" style="margin-top:16px">
       <div class="card-head"><h3>Loan officer performance</h3><div class="sub">Savings &amp; repayments filtered by: <b>${filterBtns.find(([k])=>k===_dashFilter)?.[1]||''}</b> &nbsp; - &nbsp; Active loans &amp; disbursed today are always current</div></div>
       <div style="overflow-x:auto">
@@ -4268,11 +4292,14 @@ function openOrderForm(){
     title:'New member order',
     body:`
       <div class="field">
-        <label>Filter group</label>
-        <select id="ord-group-filter" onchange="$('ord-mem-id').value='';$('ord-mem-search').value='';$('ord-mem-sel').textContent='';filterOrderMembers()">
-          <option value="">All visible groups</option>
-          ${visibleOrderGroups.map(g=>`<option value="${g.id}">${g.name}${g.group_code ? ' - '+g.group_code : ''}</option>`).join('')}
-        </select>
+        <label>Search group</label>
+        <div class="search-box" style="position:relative">
+          <input id="ord-group-search" placeholder="Type group name or group code..." autocomplete="off" style="padding-left:34px" oninput="$('ord-group-filter').value='';$('ord-mem-id').value='';$('ord-mem-search').value='';$('ord-mem-sel').textContent='';filterOrderGroups();filterOrderMembers()" onfocus="filterOrderGroups()" />
+          <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
+        </div>
+        <input type="hidden" id="ord-group-filter" />
+        <div id="ord-group-list" style="max-height:150px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
+        <div class="muted" style="font-size:11px;margin-top:3px">Type a group name to narrow the members below. Leave blank to search all visible groups.</div>
       </div>
       <div class="field"><label>Member *</label>
         <div class="search-box" style="position:relative">
@@ -4346,6 +4373,7 @@ function openOrderForm(){
     $('ord-mem-search').addEventListener('focus', filterOrderMembers);
     document.addEventListener('click', e => {
       if(!e.target.closest('#ord-mem-list') && e.target.id!=='ord-mem-search') { const el=$('ord-mem-list'); if(el) el.style.display='none'; }
+      if(!e.target.closest('#ord-group-list') && e.target.id!=='ord-group-search') { const el=$('ord-group-list'); if(el) el.style.display='none'; }
     });
   }, 50);
 }
@@ -4389,9 +4417,39 @@ function ordCalcLoanTerms(){
 function ordUpdateSummary(){
   _updateOrderTotalSummary();
 }
+function visibleOrderGroupsForUser(){
+  const isAdmin = state.staff.role === 'admin';
+  return isAdmin ? state.data.groups : state.data.groups.filter(g => g.officer_id === state.staff.id);
+}
+function filterOrderGroups(){
+  const input = $('ord-group-search');
+  const list = $('ord-group-list');
+  if(!input || !list) return;
+  const q = (input.value||'').toLowerCase().trim();
+  const groups = visibleOrderGroupsForUser();
+  const matches = groups.filter(g=>{
+    const text = `${g.name||''} ${g.group_code||''}`.toLowerCase();
+    return !q || text.includes(q);
+  }).slice(0,12);
+  list.style.display = matches.length ? 'block' : 'none';
+  list.innerHTML = matches.map(g=>`<div style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onmousedown="selectOrderGroup('${g.id}','${(g.name||'').replace(/'/g,"\\'")}','${(g.group_code||'').replace(/'/g,"\\'")}')">
+    <div style="font-weight:600">${g.name||'Unnamed group'}</div>
+    ${g.group_code?`<div class="muted" style="font-size:11px;margin-top:2px">Code: ${g.group_code}</div>`:''}
+  </div>`).join('');
+}
+function selectOrderGroup(id, name, code){
+  if($('ord-group-filter')) $('ord-group-filter').value = id || '';
+  if($('ord-group-search')) $('ord-group-search').value = name + (code ? ' - '+code : '');
+  if($('ord-mem-id')) $('ord-mem-id').value = '';
+  if($('ord-mem-search')) $('ord-mem-search').value = '';
+  if($('ord-mem-sel')) $('ord-mem-sel').textContent = '';
+  const list=$('ord-group-list'); if(list) list.style.display='none';
+  filterOrderMembers();
+}
 function filterOrderMembers(){
   const q = ($('ord-mem-search').value||'').toLowerCase().trim();
   const groupFilter = $('ord-group-filter')?.value || '';
+  const groupSearch = ($('ord-group-search')?.value||'').toLowerCase().trim();
   const list = $('ord-mem-list'); if(!list) return;
   const isAdmin = state.staff.role === 'admin';
 
@@ -4405,11 +4463,12 @@ function filterOrderMembers(){
     if(m.status && m.status !== 'active') return false;
     // Officers only see members from their own assigned groups
     if(allowedGroupIds !== null && !allowedGroupIds.has(m.group_id)) return false;
-    if(groupFilter && m.group_id !== groupFilter) return false;
-    // Must match the search query (name, national ID, or phone)
-    if(!q) return true;
     const group = state.data.groups.find(g => g.id === m.group_id);
     const groupText = `${group?.name||''} ${group?.group_code||''}`.toLowerCase();
+    if(groupFilter && m.group_id !== groupFilter) return false;
+    if(!groupFilter && groupSearch && !groupText.includes(groupSearch)) return false;
+    // Must match the search query (name, national ID, or phone)
+    if(!q) return true;
     return m.full_name.toLowerCase().includes(q)
       || (m.national_id||'').toLowerCase().includes(q)
       || (m.phone||'').includes(q)
@@ -4450,6 +4509,10 @@ function selectOrderMember(id, name, groupName){
   $('ord-mem-id').value = id;
   $('ord-mem-search').value = name;
   if(member && $('ord-group-filter')) $('ord-group-filter').value = member.group_id || '';
+  if(member && $('ord-group-search')) {
+    const g = state.data.groups.find(x=>x.id===member.group_id);
+    $('ord-group-search').value = g ? (g.name + (g.group_code ? ' - '+g.group_code : '')) : '';
+  }
   $('ord-mem-sel').textContent = groupName ? ' '+name+' - '+groupName : ' '+name;
   $('ord-mem-list').style.display = 'none';
 }
