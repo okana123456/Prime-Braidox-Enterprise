@@ -4194,12 +4194,50 @@ function orderActions(ev, id){
   const isAdmin = state.staff.role==='admin';
   const canApprove = isAdmin || state.perms?.can_approve_orders;
   const items = [];
+  if(o.status==='pending' && isAdmin){
+    items.push({ label:'Edit order assets', onClick: ()=>openEditOrderForm(o.id) });
+  }
   if(o.status==='pending' && canApprove){
     items.push({ label:'Approve & issue loan', onClick: ()=>approveOrder(o) });
     items.push({ label:'Reject order', danger:true, onClick: ()=>rejectOrder(o) });
   }
   if(!items.length){ items.push({ label:'View', onClick: ()=>{} }); }
   showActMenu(ev, items);
+}
+function safeText(value){
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function orderAssetLinesFromNotes(order){
+  try{
+    const parsed = JSON.parse(order.notes || '{}');
+    if(parsed && Array.isArray(parsed.assets) && parsed.assets.length){
+      return parsed.assets.map(line => {
+        const asset = state.data.inventory.find(a => a.id === line.asset_id);
+        return {
+          asset_id: line.asset_id || asset?.id || '',
+          asset_name: line.asset_name || asset?.name || '',
+          loan_price: Number(line.loan_price ?? asset?.loan_price ?? 0),
+          stock: Number(line.stock ?? asset?.stock ?? 0),
+          quantity: Math.max(1, Number(line.quantity) || 1)
+        };
+      });
+    }
+  }catch(e){ /* legacy orders may have plain notes */ }
+  const asset = state.data.inventory.find(a => a.id === order.asset_id);
+  return [{
+    asset_id: order.asset_id || asset?.id || '',
+    asset_name: asset?.name || order.asset_name || '',
+    loan_price: Number(asset?.loan_price || 0),
+    stock: Number(asset?.stock || 0),
+    quantity: Math.max(1, Number(order.quantity) || 1)
+  }].filter(line => line.asset_id || line.asset_name);
+}
+function orderUserNotes(order){
+  try{
+    const parsed = JSON.parse(order.notes || '{}');
+    if(parsed && typeof parsed.user_notes === 'string') return parsed.user_notes;
+  }catch(e){ /* legacy plain notes */ }
+  return order.notes && !String(order.notes).trim().startsWith('{') ? order.notes : '';
 }
 // _orderLines holds line items for the order form: [{ asset_id, asset_name, loan_price, stock, quantity }]
 let _orderLines = [];
@@ -4215,11 +4253,11 @@ function _renderOrderLines(){
       </div>
       <div class="field" style="margin-bottom:8px">
         <div class="search-box" style="position:relative">
-          <input id="ord-ast-search-${i}" placeholder="Search asset..." autocomplete="off" style="padding-left:34px" oninput="_filterOrderAssets(${i})" onfocus="_filterOrderAssets(${i})" value="${line.asset_name||''}" />
+          <input id="ord-ast-search-${i}" placeholder="Search asset..." autocomplete="off" style="padding-left:34px" oninput="_filterOrderAssets(${i})" onfocus="_filterOrderAssets(${i})" value="${safeText(line.asset_name||'')}" />
           <span class="ic" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
         </div>
         <div id="ord-ast-list-${i}" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius-sm) var(--radius-sm);display:none;background:var(--surface);box-shadow:var(--shadow-md)"></div>
-        ${line.asset_name ? `<div class="muted" style="font-size:11px;margin-top:3px"> ${line.asset_name} - ${KES(line.loan_price||0)} - stock: ${line.stock||0}</div>` : ''}
+        ${line.asset_name ? `<div class="muted" style="font-size:11px;margin-top:3px">${safeText(line.asset_name)} - ${KES(line.loan_price||0)} - stock: ${line.stock||0}</div>` : ''}
       </div>
       <div class="field" style="margin-bottom:0">
         <label style="font-size:11px">Quantity</label>
@@ -4376,6 +4414,79 @@ function openOrderForm(){
       if(!e.target.closest('#ord-group-list') && e.target.id!=='ord-group-search') { const el=$('ord-group-list'); if(el) el.style.display='none'; }
     });
   }, 50);
+}
+function openEditOrderForm(orderId){
+  const order = state.data.orders.find(x => x.id === orderId);
+  if(!order) return toast('Order not found.','error');
+  if(state.staff.role !== 'admin') return toast('Only the admin can edit submitted orders.','error');
+  if(order.status !== 'pending') return toast('Only pending orders can be edited before approval.','error');
+
+  const member = state.data.members.find(x => x.id === order.member_id);
+  const group = state.data.groups.find(x => x.id === order.group_id);
+  _orderLines = orderAssetLinesFromNotes(order);
+  if(!_orderLines.length) _orderLines = [{ asset_id:'', asset_name:'', loan_price:0, stock:0, quantity:1 }];
+
+  modal({
+    title:'Edit pending order',
+    body:`
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Member</div>
+        <div style="font-weight:800">${safeText(member?.full_name || 'Unknown member')}</div>
+        <div class="muted" style="font-size:12px;margin-top:2px">${safeText(group?.name || 'No group')}</div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">Assets *</div>
+      <div id="ord-lines-container"></div>
+      <button type="button" class="btn btn-outline btn-sm" style="margin-bottom:14px" onclick="_addOrderLine()">+ Add Asset</button>
+
+      <div class="field"><label>Order date</label><input type="date" id="ord-date" value="${safeText(order.ordered_on || todayISO())}" /></div>
+      <div class="divider" style="margin:10px 0 14px"></div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:10px">Desired Loan Terms</div>
+      <div class="grid-2">
+        <div class="field"><label>Desired Number of Weeks</label><input id="ord-weeks" type="number" min="1" max="48" placeholder="e.g. 10" value="${safeText(order.desired_weeks || '')}" oninput="ordCalcFromWeeks()" /></div>
+        <div class="field"><label>Desired Weekly Installment (KES)</label><input id="ord-wi" type="number" min="1" placeholder="e.g. 500" value="${safeText(order.desired_weekly_installment || '')}" oninput="ordCalcFromInstallment()" /></div>
+      </div>
+      <div id="ord-loan-out" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+      <div class="field"><label>Notes</label><textarea id="ord-notes" rows="2">${safeText(orderUserNotes(order))}</textarea></div>
+    `,
+    actions:[
+      { label:'Cancel', onClick: closeModal },
+      { label:'Save changes', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const validLines = _orderLines.filter(l=>l.asset_id && Number(l.quantity)>0);
+        if(!validLines.length) return toast('Please keep at least one asset on the order.','error');
+
+        const asset_name = validLines.map(l=>`${l.asset_name} (x${l.quantity})`).join(', ');
+        const totalQuantity = validLines.reduce((a,l)=>a+Number(l.quantity),0);
+        const primaryAsset = validLines[0];
+        const notesPayload = JSON.stringify({
+          assets: validLines.map(l=>({
+            asset_id:l.asset_id,
+            asset_name:l.asset_name,
+            loan_price:Number(l.loan_price)||0,
+            stock:Number(l.stock)||0,
+            quantity:Number(l.quantity)||1
+          })),
+          user_notes: $('ord-notes').value || ''
+        });
+        const upd = {
+          asset_id: primaryAsset.asset_id,
+          asset_name,
+          quantity: totalQuantity,
+          ordered_on: $('ord-date').value || todayISO(),
+          notes: notesPayload,
+          desired_weeks: Number($('ord-weeks').value) || null,
+          desired_weekly_installment: Number($('ord-wi').value) || null
+        };
+        const { data, error } = await sb.from('pb_orders').update(upd).eq('id', order.id).select().single();
+        if(error) return toast('Order update failed: '+error.message,'error');
+        Object.assign(order, data || upd);
+        audit('order_update','pb_orders',order.id,null,upd);
+        closeModal(); render(); toast('Order updated. You can now approve it.','success');
+      }}
+    ]
+  });
+  setTimeout(()=>_renderOrderLines(), 50);
 }
 function _ordGetPrincipal(){
   // Sum across all order lines
