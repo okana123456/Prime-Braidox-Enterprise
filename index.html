@@ -3922,8 +3922,10 @@ function pageInventory(){
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>Asset</th><th>Category</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Loan price/unit</th>
-          <th class="num">Total cost value</th><th class="num">Total loan value</th><th class="num">Margin</th><th>Status</th><th></th>
+          ${isAdmin
+            ? `<th>Asset</th><th>Category</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Loan price/unit</th>
+               <th class="num">Total cost value</th><th class="num">Total loan value</th><th class="num">Margin</th><th>Status</th><th></th>`
+            : `<th>Asset</th><th>Category</th><th class="num">Available</th><th class="num">Loan price</th><th>Status</th>`}
         </tr></thead>
         <tbody>
           ${paged.map(a => {
@@ -3931,7 +3933,7 @@ function pageInventory(){
             const totalCost = Number(a.buying_price||0)*Number(a.stock||0);
             const totalLoan = Number(a.loan_price||0)*Number(a.stock||0);
             const status = a.stock===0 ? `<span class="badge b-red">Out of stock</span>` : a.stock<=a.reorder_level ? `<span class="badge b-yellow">Low stock</span>` : `<span class="badge b-green">In stock</span>`;
-            return `<tr>
+            return isAdmin ? `<tr>
               <td><b>${a.name}</b></td>
               <td>${a.category||' - '}</td>
               <td class="num">${a.stock}</td>
@@ -3942,8 +3944,14 @@ function pageInventory(){
               <td class="num">${margin.toFixed(1)}%</td>
               <td>${status}</td>
               ${isAdmin?`<td><button class="act-btn" onclick="invActions(event,'${a.id}')"> - - - </button></td>`:'<td></td>'}
+            </tr>` : `<tr>
+              <td><b>${a.name}</b></td>
+              <td>${a.category||' - '}</td>
+              <td class="num">${a.stock}</td>
+              <td class="num"><b>${KES(a.loan_price)}</b></td>
+              <td>${status}</td>
             </tr>`;
-          }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No inventory yet</h4><p>Add assets manually or import from Excel.</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="${isAdmin?10:5}"><div class="empty"><h4>No inventory yet</h4><p>${isAdmin?'Add assets manually or import from Excel.':'No assets are available yet.'}</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
