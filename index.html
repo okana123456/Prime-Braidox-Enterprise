@@ -857,6 +857,20 @@ function loanExpectedCollectionAsOf(loan, asOf=todayISO()){
   // to the next collection amount. Officers collect the normal installment.
   return Math.min(weekly, loanOutstanding(loan));
 }
+function loanExpectedCollectionOnDate(loan, asOf=todayISO()){
+  if(!loan || loan.status !== 'active' || loanOutstanding(loan) <= 0) return 0;
+  return loanNextDueDate(loan, asOf) === asOf ? loanExpectedCollectionAsOf(loan, asOf) : 0;
+}
+function expectedCollectionSummary(loans, asOf=todayISO()){
+  const dueLoans = (loans || []).filter(l => loanExpectedCollectionOnDate(l, asOf) > 0);
+  return {
+    date: asOf,
+    loans: dueLoans,
+    count: dueLoans.length,
+    amount: dueLoans.reduce((a,l)=>a + loanExpectedCollectionOnDate(l, asOf), 0),
+    arrears: dueLoans.reduce((a,l)=>a + loanArrearsAsOf(l, asOf), 0)
+  };
+}
 function loanNextDueDate(loan, asOf=todayISO()){
   const start = localDateFromISO(loan?.start_date);
   const today = localDateFromISO(asOf);
@@ -1607,6 +1621,7 @@ function closeActMenu(){ $('actmenu-root').innerHTML = ''; }
  * ===================================================================== */
 let _dashFilter = 'today';
 let _dashCustomStart = '', _dashCustomEnd = '';
+let _expectedCollectionDate = '';
 let _arrearsFilter = 'all'; // date range filter for arrears page and dashboard
 let _arrearsCustomStart = '', _arrearsCustomEnd = '';
 let _loanDateFilter = 'all';
@@ -1700,6 +1715,8 @@ function pageDashboard(){
   const totalRepay = repayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const activeLoans = state.data.loans.filter(l=>l.status==='active');
   const outstandingBal = activeLoans.reduce((a,l)=>a+(Number(l.total_payable||0)-loanPaid(l.id)),0);
+  const expectedDate = _expectedCollectionDate || todayISO();
+  const expectedToday = expectedCollectionSummary(activeLoans, expectedDate);
   const interestEarned = repayments.reduce((a,r)=>a+Number(r.interest||0),0);
   const eligibleCount = state.data.members.filter(m=>memberEligible(m.id)).length;
   const invValue = state.data.inventory.reduce((a,i)=>a+Number(i.loan_price||0)*Number(i.stock||0),0);
@@ -1733,11 +1750,16 @@ function pageDashboard(){
       ${_dashFilter==='custom'?`<input type="date" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomStart=this.value;pageDashboard()" />
       <span class="muted" style="font-size:12px">to</span>
       <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageDashboard()" />`:''}
+      <div style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">Expected collection date</span>
+        <input type="date" value="${expectedDate}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_expectedCollectionDate=this.value;pageDashboard()" />
+      </div>
     </div>
 
       <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
       <div class="kpi k-primary"><div class="l">Savings collected</div><div class="v">${KES(totalSavings)}</div><div class="d">${savings.length} entries</div></div>
       <div class="kpi k-success"><div class="l">All-time savings</div><div class="v">${KES(allTimeSavings)}</div><div class="d">approved savings only</div></div>
+      <div class="kpi k-primary"><div class="l">Expected collection</div><div class="v">${KES(expectedToday.amount)}</div><div class="d">${fmtDate(expectedDate)} - ${expectedToday.count} loan(s) due</div></div>
       <div class="kpi"><div class="l">Active loans outstanding</div><div class="v">${KES(outstandingBal)}</div><div class="d">${activeLoans.length} active loans</div></div>
       <div class="kpi k-success"><div class="l">Repayments received</div><div class="v">${KES(totalRepay)}</div><div class="d">Interest ${KES(interestEarned)}</div></div>
       <div class="kpi k-warn"><div class="l">Members</div><div class="v">${state.data.members.length}</div><div class="d">${eligibleCount} loan-eligible</div></div>
@@ -1928,6 +1950,8 @@ function pageOfficerDashboard(){
   const myPendingRepaymentsTotal = myPendingRepayments.reduce((a,b)=>a+Number(b.amount||0),0);
   const todayStr = todayISO();
   const myLoansIssuedToday = state.data.loans.filter(l=>l.status==='active' && l.officer_id===me.id && (l.start_date||'').slice(0,10)===todayStr).reduce((a,b)=>a+Number(b.loan_value||0),0);
+  const expectedDate = _expectedCollectionDate || todayISO();
+  const myExpectedToday = expectedCollectionSummary(myLoans, expectedDate);
 
   const filterBtns = [
     ['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','Last month'],['3months','Last 3 months'],['custom','Custom']
@@ -1941,11 +1965,16 @@ function pageOfficerDashboard(){
       ${_dashFilter==='custom'?`<input type="date" value="${_dashCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomStart=this.value;pageDashboard()" />
       <span class="muted" style="font-size:12px">to</span>
       <input type="date" value="${_dashCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_dashCustomEnd=this.value;pageDashboard()" />`:''}
+      <div style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap">
+        <span class="muted" style="font-size:12px">Expected collection date</span>
+        <input type="date" value="${expectedDate}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" onchange="_expectedCollectionDate=this.value;pageDashboard()" />
+      </div>
     </div>
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
       <div class="kpi k-primary"><div class="l">My groups</div><div class="v">${myGroups.length}</div></div>
       <div class="kpi k-success"><div class="l">Savings recorded</div><div class="v">${KES(totalSv)}</div><div class="d">${mySavings.length} approved entries</div></div>
       <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">Interest ${KES(myInterestEarned)}</div></div>
+      <div class="kpi k-primary"><div class="l">Expected collection</div><div class="v">${KES(myExpectedToday.amount)}</div><div class="d">${fmtDate(expectedDate)} - ${myExpectedToday.count} loan(s) due</div></div>
       <div class="kpi k-warn"><div class="l">Active loans I manage</div><div class="v">${myLoans.length}</div></div>
       <div class="kpi k-danger"><div class="l">Outstanding balance</div><div class="v">${KES(myOutstandingBal)}</div><div class="d">across my active loans</div></div>
       <div class="kpi k-primary"><div class="l">Loans Issued Today</div><div class="v">${KES(myLoansIssuedToday)}</div><div class="d">active loans started today</div></div>
@@ -1988,18 +2017,22 @@ function pageOfficerDashboard(){
     <div class="card" style="margin-top:16px">
       <div class="card-head"><h3>My Active Loans</h3><div class="sub">${myLoans.length} active loans</div></div>
       <div style="overflow-x:auto"><table class="tbl">
-        <thead><tr><th>Member</th><th>Asset</th><th class="num">Loan Value</th><th class="num">Outstanding Balance</th></tr></thead>
+        <thead><tr><th>Member</th><th>Asset</th><th>Next Due</th><th class="num">Expected</th><th class="num">Loan Value</th><th class="num">Outstanding Balance</th></tr></thead>
         <tbody>
           ${myLoans.map(l=>{
             const mem = state.data.members.find(x=>x.id===l.member_id);
             const outstanding = Math.max(0, Number(l.total_payable||0) - loanPaid(l.id));
+            const nextDue = loanNextDueDate(l, expectedDate);
+            const expectedAmount = loanExpectedCollectionOnDate(l, expectedDate);
             return `<tr>
               <td><b>${mem?.full_name||' - '}</b><div class="muted" style="font-size:11px">${mem?.national_id||''}</div></td>
               <td>${l.asset_name}</td>
+              <td style="white-space:nowrap">${fmtDate(nextDue)}</td>
+              <td class="num" style="color:${expectedAmount>0?'var(--primary)':'var(--text-muted)'};font-weight:${expectedAmount>0?'700':'400'}">${expectedAmount>0?KES(expectedAmount):' - '}</td>
               <td class="num">${KES(l.loan_value)}</td>
               <td class="num" style="color:var(--danger);font-weight:700">${KES(outstanding)}</td>
             </tr>`;
-          }).join('') || `<tr><td colspan="4"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
+          }).join('') || `<tr><td colspan="6"><div class="empty" style="padding:20px 0"><h4>No active loans</h4></div></td></tr>`}
         </tbody>
       </table></div>
     </div>
