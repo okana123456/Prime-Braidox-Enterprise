@@ -483,6 +483,12 @@ const state = {
 const KES = n => 'KES ' + (Number(n||0)).toLocaleString('en-KE', { minimumFractionDigits:0, maximumFractionDigits:2 });
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-KE', { day:'2-digit', month:'short', year:'numeric' }) : ' - ';
 const todayISO = () => new Date().toISOString().slice(0,10);
+const addDaysISO = (isoDate, days) => {
+  const d = new Date(isoDate || todayISO());
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0,10);
+};
+const escapeHtml = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /* ----- M-Pesa group code generator -----
  * Generates a short, unique alphanumeric code (e.g. "GRP-7F3K") used as the
@@ -1731,9 +1737,10 @@ function pageDashboard(){
     const oLoans = activeOfficerLoans.reduce((a,b)=>a+Number(b.loan_value||0),0);
     const oOutstanding = activeOfficerLoans.reduce((a,l)=>a+loanOutstanding(l),0);
     const oArrears = activeOfficerLoans.reduce((a,l)=>a+loanArrearsAsOf(l),0);
+    const oExpectedCollection = expectedCollectionSummary(activeOfficerLoans, expectedDate);
     const oOrdersToday = state.data.orders.filter(o2=>o2.recorded_by===o.id && (o2.ordered_on||'').slice(0,10)===todayISO_).length;
     const oLoanValuePeriod = state.data.loans.filter(l=>l.officer_id===o.id && l.status==='active' && inRangeFallback(l.start_date, l.created_at)).reduce((a,b)=>a+Number(b.loan_value||0),0);
-    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, activeLoanCount: activeOfficerLoans.length, outstanding: oOutstanding, arrears: oArrears, ordersToday: oOrdersToday, loanValuePeriod: oLoanValuePeriod };
+    return { name: o.full_name, savings: oSav, repayments: oRep, loans: oLoans, activeLoanCount: activeOfficerLoans.length, outstanding: oOutstanding, arrears: oArrears, expectedCollection: oExpectedCollection.amount, expectedCount: oExpectedCollection.count, ordersToday: oOrdersToday, loanValuePeriod: oLoanValuePeriod };
   }).sort((a,b)=>b.savings-a.savings);
 
   const filterBtns = [
@@ -1816,12 +1823,13 @@ function pageDashboard(){
       <div class="card-head"><h3>Officer loan portfolio</h3><div class="sub">Current active loan book by officer</div></div>
       <div style="overflow-x:auto">
         <table class="tbl">
-          <thead><tr><th>Officer</th><th class="num">Active loans</th><th class="num">Loan value</th><th class="num">Outstanding</th><th class="num">Arrears</th></tr></thead>
+          <thead><tr><th>Officer</th><th class="num">Active loans</th><th class="num">Loan value</th><th class="num">Expected on ${fmtDate(expectedDate)}</th><th class="num">Outstanding</th><th class="num">Arrears</th></tr></thead>
           <tbody>
             ${officerPerf.map(o=>`<tr>
               <td><b>${o.name}</b></td>
               <td class="num">${o.activeLoanCount}</td>
               <td class="num">${KES(o.loans)}</td>
+              <td class="num" style="color:${o.expectedCollection>0?'var(--primary)':'var(--text-muted)'}">${o.expectedCollection>0?KES(o.expectedCollection):' - '}<div style="font-size:10px;color:var(--text-muted)">${o.expectedCount||0} loan(s)</div></td>
               <td class="num" style="color:${o.outstanding>0?'var(--danger)':'inherit'}">${KES(o.outstanding)}</td>
               <td class="num" style="color:${o.arrears>0?'var(--danger)':'inherit'}">${o.arrears>0?KES(o.arrears):' - '}</td>
             </tr>`).join('')}
@@ -2573,6 +2581,7 @@ function openMemberEdit(m){
     body:`<form id="me">
       <div class="grid-2">
         <div class="field"><label>Full name</label><input name="full_name" value="${m.full_name}" required /></div>
+        <div class="field"><label>ID number</label><input name="national_id" value="${m.national_id||''}" placeholder="Client ID number" /></div>
         <div class="field"><label>Phone</label><input name="phone" value="${m.phone||''}" /></div>
         <div class="field"><label>Email</label><input name="email" value="${m.email||''}" /></div>
         <div class="field"><label>Occupation</label><input name="occupation" value="${m.occupation||''}" /></div>
@@ -3706,7 +3715,13 @@ function loanActions(ev, id){
   const isAdmin = state.staff.role==='admin';
   const canRepay = isAdmin || state.staff.role === 'officer';
   showActMenu(ev, [
-    { label:'View schedule', onClick: ()=>showLoanSchedule(l) },...(canRepay && l.status==='active' ? [{ label:' Record Repayment', onClick: ()=>openStandaloneRepayment(l.id, l.member_id) }] : []),...(isAdmin && l.status==='active' ? [
+    { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
+    { label:'Download 14-day demand letter', onClick: ()=>downloadDemandLetter(l.id) },
+    ...(canRepay && l.status==='active' ? [
+      { label:'Record Repayment', onClick: ()=>openStandaloneRepayment(l.id, l.member_id) },
+      { label:'Record Saving', onClick: ()=>openStandaloneSaving(l.member_id, l.group_id) }
+    ] : []),
+    ...(isAdmin && l.status==='active' ? [
       { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
       { label:'Restructure Loan', onClick: ()=>openLoanRestructure(l) },
       { label:'Mark as defaulted', danger:true, onClick: ()=>confirmDialog(
@@ -7261,6 +7276,124 @@ function srCalcSplit(ir){
   const principal = +(amount - interest).toFixed(2);
   const pi = document.getElementById('sr-principal'); if(pi) pi.textContent = KES(principal);
   const ii = document.getElementById('sr-interest'); if(ii) ii.textContent = KES(interest);
+}
+
+function openStandaloneSaving(memberId, groupId){
+  const mem = state.data.members.find(m => m.id === memberId);
+  if(!mem){ toast('Member not found.', 'error'); return; }
+  const group = state.data.groups.find(g => g.id === (groupId || mem.group_id));
+  modal({
+    title: `Record Saving - ${mem.full_name}`,
+    body: `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem.full_name}</div></div>
+          <div><div class="muted" style="font-size:11px">Group</div><div style="font-weight:600">${group?.name || ' - '}</div></div>
+          <div><div class="muted" style="font-size:11px">Current savings</div><div style="font-weight:600;color:var(--success)">${KES(memberSavings(mem.id))}</div></div>
+          <div><div class="muted" style="font-size:11px">Recorded by</div><div style="font-weight:600">${state.staff.full_name}</div></div>
+        </div>
+      </div>
+      <div class="field"><label>Saving Amount (KES) *</label><input type="number" id="ss-amount" min="1" step="0.01" placeholder="Enter amount" /></div>
+      <div class="field"><label>Date</label><input type="date" id="ss-date" value="${todayISO()}" /></div>
+      <div class="field"><label>Notes</label><input id="ss-notes" placeholder="Optional note" /></div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: 'Save Saving', cls: 'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const amount = Number(document.getElementById('ss-amount')?.value) || 0;
+        const date = document.getElementById('ss-date')?.value || todayISO();
+        const notes = document.getElementById('ss-notes')?.value?.trim() || null;
+        if(amount <= 0) return toast('Please enter a valid saving amount.', 'error');
+        const row = {
+          business_id: state.staff.business_id || null,
+          member_id: mem.id,
+          group_id: group?.id || mem.group_id || null,
+          meeting_date: date,
+          amount,
+          type: 'savings',
+          recorded_by: state.staff.id,
+          notes,
+          status: state.staff.role === 'admin' ? 'approved' : 'pending'
+        };
+        const { data, error } = await sb.from('pb_savings').insert(row).select().single();
+        if(error) return toast(error.message, 'error');
+        state.data.savings.unshift(data);
+        audit('standalone_saving', 'pb_savings', data.id, null, row);
+        closeModal();
+        render();
+        toast(state.staff.role === 'admin' ? 'Saving recorded successfully.' : 'Saving submitted for approval.', 'success');
+      }}
+    ]
+  });
+}
+
+function downloadDemandLetter(loanId){
+  const loan = state.data.loans.find(l => l.id === loanId);
+  if(!loan){ toast('Loan not found.', 'error'); return; }
+  const mem = state.data.members.find(m => m.id === loan.member_id) || {};
+  const group = state.data.groups.find(g => g.id === loan.group_id) || {};
+  const officer = state.data.staff.find(s => s.id === loan.officer_id) || {};
+  const paid = loanPaid(loan.id);
+  const outstanding = Math.max(0, Number(loan.total_payable || 0) - paid);
+  const arrears = loanArrearsAsOf(loan);
+  const deadline = addDaysISO(todayISO(), 14);
+  const businessName = state.settings?.business_name || 'Prime Braidox Enterprise';
+  const phone = state.settings?.business_phone || state.settings?.phone || '';
+  const letterNo = `DL-${todayISO().replaceAll('-','')}-${String(loan.id || '').slice(0,6).toUpperCase()}`;
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>14-day demand letter - ${escapeHtml(mem.full_name || 'Member')}</title>
+  <style>
+    @page { size: A4; margin: 18mm; }
+    body { font-family: Arial, sans-serif; color:#111827; line-height:1.45; font-size:13px; }
+    .head { border-bottom:2px solid #0f2a47; padding-bottom:12px; margin-bottom:18px; }
+    .brand { font-size:22px; font-weight:700; color:#0f2a47; }
+    .muted { color:#64748b; font-size:12px; }
+    .title { text-align:center; font-size:16px; font-weight:700; text-transform:uppercase; margin:22px 0; text-decoration:underline; }
+    table { width:100%; border-collapse:collapse; margin:14px 0; }
+    td, th { border:1px solid #d1d5db; padding:8px; text-align:left; }
+    th { background:#f3f4f6; }
+    .notice { border-left:4px solid #b91c1c; padding:10px 12px; background:#fff7ed; margin:16px 0; }
+    .sign { margin-top:42px; }
+    .actions { position:fixed; right:16px; top:16px; display:flex; gap:8px; }
+    .actions button { padding:8px 12px; border:1px solid #0f2a47; background:#0f2a47; color:white; border-radius:6px; cursor:pointer; }
+    @media print { .actions { display:none; } }
+  </style>
+</head>
+<body>
+  <div class="actions"><button onclick="window.print()">Print / Save PDF</button></div>
+  <div class="head">
+    <div class="brand">${escapeHtml(businessName)}</div>
+    <div class="muted">${phone ? 'Contact: ' + escapeHtml(phone) : 'Asset loan management office'}</div>
+  </div>
+  <div class="muted">Date: ${fmtDate(todayISO())}</div>
+  <div class="muted">Reference: ${escapeHtml(letterNo)}</div>
+  <p><b>To:</b><br>${escapeHtml(mem.full_name || 'Client')}<br>ID No: ${escapeHtml(mem.national_id || 'Not provided')}<br>Phone: ${escapeHtml(mem.phone || 'Not provided')}<br>Group: ${escapeHtml(group.name || 'Not provided')}</p>
+  <div class="title">14-Day Demand Letter</div>
+  <p>We refer to the asset loan issued to you by ${escapeHtml(businessName)}. Our records show that the loan below has an outstanding balance that requires your urgent attention.</p>
+  <table>
+    <tr><th>Asset / Loan</th><td>${escapeHtml(loan.asset_name || 'Asset loan')}</td></tr>
+    <tr><th>Loan start date</th><td>${fmtDate(loan.start_date)}</td></tr>
+    <tr><th>Total payable</th><td>${KES(loan.total_payable)}</td></tr>
+    <tr><th>Total paid</th><td>${KES(paid)}</td></tr>
+    <tr><th>Current arrears</th><td>${KES(arrears)}</td></tr>
+    <tr><th>Outstanding balance</th><td><b>${KES(outstanding)}</b></td></tr>
+    <tr><th>Loan officer</th><td>${escapeHtml(officer.full_name || 'Not assigned')}</td></tr>
+  </table>
+  <div class="notice">You are required to clear the outstanding balance or regularize this account within fourteen (14) days from the date of this letter, on or before <b>${fmtDate(deadline)}</b>.</div>
+  <p>If payment has already been made, kindly present the official confirmation for reconciliation. Failure to respond within the stated period may lead to further recovery action in line with the loan agreement and business policy.</p>
+  <p>Thank you for your prompt attention to this matter.</p>
+  <div class="sign"><p>Authorized by:<br><br>_____________________________<br>${escapeHtml(businessName)}</p></div>
+</body>
+</html>`;
+  const w = window.open('', '_blank');
+  if(!w){ toast('Allow pop-ups to open the demand letter.', 'warn'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }
 
 /* =====================================================================
