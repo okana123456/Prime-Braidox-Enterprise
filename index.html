@@ -1435,7 +1435,7 @@ function navItems(){
     { k:'dashboard', label:'Dashboard', show:true, icon:dashIcon() },
     { k:'groups', label:'Groups', show:true, icon:groupsIcon() },
     { k:'members', label:'Members', show:true, icon:memberIcon() },
-    { k:'meeting', label:'Meeting Recorder', show:isAdmin || p.can_record_savings || p.can_record_repayments, icon:meetingIcon() },
+    { k:'meeting', label:'Meeting Recorder', show:isAdmin, icon:meetingIcon() },
     { k:'savings', label:'Savings', show:true, icon:savingsIcon() },
     { k:'repayments', label:'Repayments', show:true, icon:repaymentsIcon() },
     { k:'loans', label:'Active Loans', show:true, icon:loanIcon() },
@@ -1508,7 +1508,9 @@ function renderShell(){
         <nav class="bottom-nav">
           <a class="${state.view==='dashboard'?'active':''}" onclick="go('dashboard')">${dashIcon()}<span>Home</span></a>
           <a class="${state.view==='groups'||state.view==='members'?'active':''}" onclick="go('${primary.find(p=>p.k==='groups')?'groups':'members'}')">${groupsIcon()}<span>Groups</span></a>
-          <a class="${state.view==='meeting'?'active':''}" onclick="go('meeting')">${meetingIcon()}<span>Meeting</span></a>
+          ${state.staff.role==='admin'
+            ? `<a class="${state.view==='meeting'?'active':''}" onclick="go('meeting')">${meetingIcon()}<span>Meeting</span></a>`
+            : `<a class="${state.view==='repayments'?'active':''}" onclick="go('repayments')">${repaymentsIcon()}<span>Payments</span></a>`}
           <a class="${state.view==='loans'?'active':''}" onclick="go('loans')">${loanIcon()}<span>Loans</span></a>
         </nav>
       </div>
@@ -1526,7 +1528,14 @@ function pageTitle(){
     memberProfile:'Member Profile'
   })[state.view] || ' - ';
 }
-function go(view, ctx=null){ state.view = view; state.viewCtx = ctx; toggleSidebar(false); render(); }
+function go(view, ctx=null){
+  if(view === 'meeting' && state.staff?.role !== 'admin'){
+    view = 'loans';
+    ctx = null;
+    toast('Officers should record payments from Active Loans.', 'info');
+  }
+  state.view = view; state.viewCtx = ctx; toggleSidebar(false); render();
+}
 function toggleSidebar(force){
   const s = $('sidebar'), sc = $('scrim');
   const open = force === undefined ? !s.classList.contains('open') : force;
@@ -1535,6 +1544,10 @@ function toggleSidebar(force){
 }
 
 function renderPage(){
+  if(state.view === 'meeting' && state.staff?.role !== 'admin'){
+    state.view = 'loans';
+    state.viewCtx = null;
+  }
   const fns = {
     dashboard: pageDashboard, groups: pageGroups, members: pageMembers,
     meeting: pageMeeting, savings: pageSavings, repayments: pageRepayments,
@@ -1982,7 +1995,7 @@ function pageOfficerDashboard(){
       <div class="kpi k-primary"><div class="l">My groups</div><div class="v">${myGroups.length}</div></div>
       <div class="kpi k-success"><div class="l">Savings recorded</div><div class="v">${KES(totalSv)}</div><div class="d">${mySavings.length} approved entries</div></div>
       <div class="kpi"><div class="l">Repayments recorded</div><div class="v">${KES(totalRp)}</div><div class="d">Interest ${KES(myInterestEarned)}</div></div>
-      <div class="kpi k-primary"><div class="l">Expected collection</div><div class="v">${KES(myExpectedToday.amount)}</div><div class="d">${fmtDate(expectedDate)} - ${myExpectedToday.count} loan(s) due</div></div>
+      <div class="kpi k-primary"><div class="l">Expected to collect today</div><div class="v">${KES(myExpectedToday.amount)}</div><div class="d">${fmtDate(expectedDate)} - ${myExpectedToday.count} loan(s) due under my portfolio</div></div>
       <div class="kpi k-warn"><div class="l">Active loans I manage</div><div class="v">${myLoans.length}</div></div>
       <div class="kpi k-danger"><div class="l">Outstanding balance</div><div class="v">${KES(myOutstandingBal)}</div><div class="d">across my active loans</div></div>
       <div class="kpi k-primary"><div class="l">Loans Issued Today</div><div class="v">${KES(myLoansIssuedToday)}</div><div class="d">active loans started today</div></div>
@@ -4790,7 +4803,7 @@ function approveOrder(o){
       ${requiresDeposit ? `
       <div style="background:var(--warning-50);border:1px solid var(--warning);border-radius:var(--radius-sm);padding:12px 14px;margin:12px 0;font-size:13px">
         <div style="font-weight:700;color:var(--warning);margin-bottom:4px">Warning:  Deposit Required</div>
-        <div>A <b>25% deposit of ${KES(depositAmount)}</b> is required for loans over KES 20,000. It will <b>not</b> be auto-deducted; collect it once or in installments through the Meeting Recorder deposit column.</div>
+        <div>A <b>25% deposit of ${KES(depositAmount)}</b> is required for loans over KES 20,000. It will <b>not</b> be auto-deducted; collect it once or in installments from <b>Active Loans &gt; Record Saving</b>.</div>
       </div>` : ''}
       <div class="divider"></div>
       <div class="grid-2">
@@ -4844,7 +4857,7 @@ function approveOrder(o){
         state.data.loans.unshift(loanData);
         audit('loan_issue','pb_loans',loanData.id,null,loan);
 
-        closeModal(); render(); toast('Loan issued and stock deducted'+(requiresDeposit?' - deposit to be collected via Meeting Recorder':''),'success');
+        closeModal(); render(); toast('Loan issued and stock deducted'+(requiresDeposit?' - deposit to be collected from Active Loans':''),'success');
       }}
     ]
   });
