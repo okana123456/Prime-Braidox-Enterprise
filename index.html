@@ -950,6 +950,23 @@ function mpesaTxnSortTime(t){
   const dt = new Date(raw);
   return Number.isNaN(dt.getTime()) ? 0 : dt.getTime();
 }
+function cleanMpesaReference(value){
+  return String(value || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+}
+function reconciliationForMpesaTransaction(txn){
+  const ref = cleanMpesaReference(txn?.trans_id);
+  if(!ref) return null;
+  return (state.data.reconciliations || []).find(r => cleanMpesaReference(r.mpesa_reference) === ref) || null;
+}
+function unlinkedGroupMpesaTransactions(groupIds=null){
+  const allowed = groupIds ? new Set(groupIds) : null;
+  return (state.data.mpesaTransactions || [])
+    .filter(t => t.transaction_type === 'group_remittance')
+    .filter(t => t.group_id && (!allowed || allowed.has(t.group_id)))
+    .filter(t => !reconciliationForMpesaTransaction(t))
+    .slice()
+    .sort((a,b) => mpesaTxnSortTime(b) - mpesaTxnSortTime(a));
+}
 function loanPerformance(loan){
   if(!loan) return { score:null, label:'No active loan', badgeClass:'b-grey', summary:'No active loan to rate.', progressPct:0, arrears:0, outstanding:0 };
   const paid = loanPaid(loan.id);
@@ -5654,6 +5671,7 @@ function pageReconciliation(){
     .sort((a,b)=> new Date(b.meeting_date)-new Date(a.meeting_date));
 
   const pending = list.filter(r=>r.status==='pending');
+  const unlinkedReceived = unlinkedGroupMpesaTransactions(isAdmin ? null : myGroupIds);
 
   $('page').innerHTML = `
     <div class="page-head">
@@ -5669,6 +5687,30 @@ function pageReconciliation(){
         <button class="btn btn-primary" onclick="openReconForm()">Log remittance</button>
       </div>
     </div>
+
+    ${unlinkedReceived.length ? `
+    <div class="card" style="margin-bottom:16px;border-color:var(--info)">
+      <div class="card-head" style="border-color:var(--info);background:var(--info-50)">
+        <div>
+          <h3 style="color:var(--info)">Received on Paybill, awaiting remittance log (${unlinkedReceived.length})</h3>
+          <div class="sub">These payments reached the correct group. Link each receipt to its meeting records so it can be reconciled.</div>
+        </div>
+      </div>
+      <div style="overflow-x:auto"><table class="tbl">
+        <thead><tr><th>Date and time</th><th>Group</th><th>M-Pesa code</th><th>Receipt</th><th class="num">Received</th><th></th></tr></thead>
+        <tbody>${unlinkedReceived.map(t=>{
+          const g = state.data.groups.find(x=>x.id===t.group_id);
+          return `<tr>
+            <td style="font-size:12px">${formatMpesaDateTime(t)}</td>
+            <td><b>${g?.name||'Unknown group'}</b></td>
+            <td><code style="font-family:monospace;font-size:11px">${g?.group_code||t.account_reference||' - '}</code></td>
+            <td><code style="font-family:monospace;font-size:11px">${t.trans_id||' - '}</code></td>
+            <td class="num"><b style="color:var(--success)">${KES(t.amount)}</b></td>
+            <td><button class="btn btn-sm btn-primary" onclick="openReconForm('${t.group_id}','${t.id}')">Log remittance</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>` : ''}
 
     ${!isAdmin ? `
     <div class="card card-pad" style="margin-bottom:16px;background:var(--info-50);border-color:var(--info)">
@@ -5688,7 +5730,7 @@ function pageReconciliation(){
         <div class="sub">Check your M-Pesa Paybill statement then confirm each one.</div>
       </div>
       <div style="overflow-x:auto"><table class="tbl">
-        <thead><tr><th>Date</th><th>Group</th><th>Logged by</th><th class="num">Expected total</th><th>Officer SMS check</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Group</th><th>Receipt</th><th>Logged by</th><th class="num">Expected total</th><th>Officer SMS check</th><th></th></tr></thead>
         <tbody>${pending.map(r=>{
           const g = state.data.groups.find(x=>x.id===r.group_id);
           const off = state.data.staff.find(x=>x.id===r.logged_by);
@@ -5698,9 +5740,10 @@ function pageReconciliation(){
             ? '<span class="badge b-red"> Differs</span>'
             : '<span class="badge b-grey">Pending</span>';
           return `<tr>
-            <td>${fmtDate(r.meeting_date)}</td>
-            <td><b>${g?.name||' - '}</b></td>
-            <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>
+             <td>${fmtDate(r.meeting_date)}</td>
+             <td><b>${g?.name||' - '}</b></td>
+             <td><code style="font-family:monospace;font-size:11px">${r.mpesa_reference||'Not linked'}</code></td>
+             <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>
             <td class="num"><b>${KES(r.grand_total)}</b></td>
             <td>${mc}${r.amount_matched==='no'&&r.actual_sms_amount?` <span class="muted" style="font-size:11px">(SMS: ${KES(r.actual_sms_amount)})</span>`:''}</td>
             <td><button class="btn btn-sm btn-primary" onclick="confirmRecon('${r.id}')">Confirm received</button></td>
@@ -5746,11 +5789,14 @@ function pageReconciliation(){
   `;
 }
 
-function openReconForm(){
+function openReconForm(preselectedGroupId='', preselectedTxnId=''){
   const isAdmin = state.staff.role === 'admin';
   const myGroups = isAdmin
     ? state.data.groups
     : state.data.groups.filter(g=>g.officer_id===state.staff.id);
+  const preselectedGroup = myGroups.find(g=>g.id===preselectedGroupId) || null;
+  const preselectedTxn = (state.data.mpesaTransactions||[]).find(t=>t.id===preselectedTxnId && t.group_id===preselectedGroupId) || null;
+  const initialDate = preselectedTxn ? (mpesaTxnDateISO(preselectedTxn) || todayISO()) : todayISO();
 
   modal({
     title:'Log chairman remittance',
@@ -5762,13 +5808,13 @@ function openReconForm(){
         <div class="grid-2">
           <div class="field"><label>Group *</label>
             <div style="position:relative">
-              <input id="rec-group-search" placeholder="Type group name or M-Pesa code..." autocomplete="off" />
-              <input type="hidden" name="group_id" id="rec-group-id" required />
+               <input id="rec-group-search" placeholder="Type group name or M-Pesa code..." autocomplete="off" value="${escapeHtml(preselectedGroup?.name||'')}" />
+               <input type="hidden" name="group_id" id="rec-group-id" value="${preselectedGroup?.id||''}" required />
               <div id="rec-group-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:120;max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)"></div>
             </div>
           </div>
           <div class="field"><label>Meeting date *</label>
-            <input type="date" name="meeting_date" value="${todayISO()}" required onchange="reconAutoTotals()" />
+             <input type="date" name="meeting_date" value="${initialDate}" required onchange="reconAutoTotals()" />
           </div>
         </div>
 
@@ -5791,6 +5837,14 @@ function openReconForm(){
           <input type="hidden" id="rec-sv" name="total_savings" value="0" />
           <input type="hidden" id="rec-rp" name="total_repayments" value="0" />
           <input type="hidden" id="rec-gt" name="grand_total" value="0" />
+         </div>
+
+        <div class="field">
+          <label>Payment received on Paybill *</label>
+          <select name="mpesa_transaction_id" id="rec-mpesa-txn" required onchange="reconPaymentChanged()">
+            <option value="">Select the M-Pesa receipt received for this group</option>
+          </select>
+          <div id="rec-mpesa-help" class="helper">Select a group to see its received, unreconciled payments.</div>
         </div>
 
         <div class="field">
@@ -5815,28 +5869,37 @@ function openReconForm(){
       { label:'Submit', cls:'btn-primary', onClick: async () => {
         if(!(await ensureFreshToken())) return;
         const fd = new FormData($('rec-f'));
-        const row = Object.fromEntries(fd);
-        if(!row.group_id) return toast('Please select a group.','error');
-        if(!row.amount_matched) return toast('Please confirm if the SMS amount matches.','error');
-        // Build insert with only known columns - prevents schema cache errors
-        const insert = {
+         const row = Object.fromEntries(fd);
+         if(!row.group_id) return toast('Please select a group.','error');
+         if(!row.mpesa_transaction_id) return toast('Please select the M-Pesa payment received for this remittance.','error');
+         if(!row.amount_matched) return toast('Please confirm if the SMS amount matches.','error');
+         const mpesaTxn = (state.data.mpesaTransactions||[]).find(t=>t.id===row.mpesa_transaction_id);
+         if(!mpesaTxn || mpesaTxn.group_id!==row.group_id) return toast('The selected M-Pesa payment does not belong to this group. Refresh and try again.','error');
+         if(reconciliationForMpesaTransaction(mpesaTxn)) return toast('This M-Pesa receipt is already linked to another remittance.','error');
+         // Build insert with only known columns - prevents schema cache errors
+         const insert = {
           business_id: state.staff.business_id || null,
           group_id: row.group_id,
           meeting_date: row.meeting_date,
           total_savings: Number(row.total_savings)||0,
           total_repayments: Number(row.total_repayments)||0,
           grand_total: (Number(row.total_savings)||0) + (Number(row.total_repayments)||0),
-          amount_matched: row.amount_matched,
-          status: 'pending',
+           amount_matched: row.amount_matched,
+           actual_sms_amount: Number(mpesaTxn.amount)||0,
+           actual_amount_received: Number(mpesaTxn.amount)||0,
+           mpesa_reference: mpesaTxn.trans_id||null,
+           status: 'pending',
           logged_by: state.staff.id,
         };
-        if(row.actual_sms_amount && Number(row.actual_sms_amount)>0){
-          insert.actual_sms_amount = Number(row.actual_sms_amount);
-        }
+         if(!mpesaTxn.amount && row.actual_sms_amount && Number(row.actual_sms_amount)>0){
+           insert.actual_sms_amount = Number(row.actual_sms_amount);
+         }
         const { data, error } = await sb.from('pb_reconciliations').insert(insert).select().single();
         if(error) return toast(error.message,'error');
-        state.data.reconciliations.unshift(data);
-        audit('recon_create','pb_reconciliations',data.id,null,{ matched:row.amount_matched });
+         state.data.reconciliations.unshift(data);
+         mpesaTxn.allocated_table = 'pb_reconciliations';
+         mpesaTxn.allocated_id = data.id;
+         audit('recon_create','pb_reconciliations',data.id,null,{ matched:row.amount_matched });
         closeModal(); render();
         toast(row.amount_matched==='yes'
           ? 'Remittance logged - waiting for admin to confirm receipt.'
@@ -5844,7 +5907,11 @@ function openReconForm(){
       }}
     ]
   });
-  setTimeout(() => setupReconGroupSearch(myGroups), 0);
+  setTimeout(() => {
+    setupReconGroupSearch(myGroups);
+    reconAutoTotals(preselectedGroup?.id||'');
+    renderReconPaymentChoices(preselectedTxn?.id||'');
+  }, 0);
 }
 
 function setupReconGroupSearch(groups){
@@ -5875,6 +5942,45 @@ function reconMatchChanged(val){
   if(wrap) wrap.style.display = val==='no' ? 'block' : 'none';
 }
 
+function renderReconPaymentChoices(preferredTxnId=''){
+  const select = $('rec-mpesa-txn');
+  const help = $('rec-mpesa-help');
+  const groupId = $('rec-group-id')?.value || '';
+  if(!select) return;
+  const current = preferredTxnId || select.value;
+  const candidates = groupId
+    ? unlinkedGroupMpesaTransactions().filter(t=>t.group_id===groupId)
+    : [];
+  select.innerHTML = `<option value="">${groupId ? 'Select the M-Pesa receipt received for this group' : 'Select a group first'}</option>` +
+    candidates.map(t=>`<option value="${t.id}" ${t.id===current?'selected':''}>${formatMpesaDateTime(t)} - ${t.trans_id||'No receipt'} - ${KES(t.amount)}</option>`).join('');
+  if(help){
+    help.textContent = !groupId
+      ? 'Select a group to see its received, unreconciled payments.'
+      : candidates.length
+        ? `${candidates.length} received payment${candidates.length===1?'':'s'} awaiting a remittance log for this group.`
+        : 'No unreconciled M-Pesa payment is available for this group.';
+  }
+  if(current && candidates.some(t=>t.id===current)){
+    select.value = current;
+    reconPaymentChanged();
+  }
+}
+
+function reconPaymentChanged(){
+  const txnId = $('rec-mpesa-txn')?.value;
+  const txn = (state.data.mpesaTransactions||[]).find(t=>t.id===txnId);
+  if(!txn) return;
+  const received = Number(txn.amount)||0;
+  const expected = Number($('rec-gt')?.value||0);
+  const match = $('rec-match');
+  const actual = $('rec-actual');
+  if(actual) actual.value = received || '';
+  if(match){
+    match.value = Math.abs(received-expected) < 0.01 ? 'yes' : 'no';
+    reconMatchChanged(match.value);
+  }
+}
+
 function reconRecalc(){
   const sv = Number($('rec-sv')?.value||0);
   const rp = Number($('rec-rp')?.value||0);
@@ -5883,6 +5989,7 @@ function reconRecalc(){
   if($('rec-sv-disp')) $('rec-sv-disp').textContent = KES(sv);
   if($('rec-rp-disp')) $('rec-rp-disp').textContent = KES(rp);
   if($('rec-gt-disp')) $('rec-gt-disp').textContent = KES(total);
+  if($('rec-mpesa-txn')?.value) reconPaymentChanged();
 }
 
 function reconAutoTotals(groupId){
@@ -5899,6 +6006,7 @@ function reconAutoTotals(groupId){
   if($('rec-sv')) $('rec-sv').value = sv;
   if($('rec-rp')) $('rec-rp').value = rp;
   reconRecalc();
+  renderReconPaymentChoices();
   if(sv>0||rp>0) toast(`Auto-filled: savings ${KES(sv)} + repayments ${KES(rp)} = ${KES(sv+rp)}`,'info');
   else toast('No meeting records found for this group and date.','warn');
 }
@@ -5908,6 +6016,7 @@ async function confirmRecon(id){
   const r = state.data.reconciliations.find(x=>x.id===id);
   if(!r) return;
   const g = state.data.groups.find(x=>x.id===r.group_id);
+  const linkedTxn = (state.data.mpesaTransactions||[]).find(t=>cleanMpesaReference(t.trans_id)===cleanMpesaReference(r.mpesa_reference));
   modal({
     title:'Confirm remittance received',
     body:`
@@ -5928,12 +6037,12 @@ async function confirmRecon(id){
       </div>
       <div class="field">
         <label>M-Pesa reference from your Paybill statement</label>
-        <input id="conf-ref" placeholder="e.g. QHJ4KL2MPX" style="font-family:monospace;letter-spacing:.05em" />
-        <div class="helper">Check your M-Pesa Paybill portal or business SMS inbox. This creates an audit trail.</div>
+         <input id="conf-ref" value="${escapeHtml(r.mpesa_reference||'')}" placeholder="e.g. QHJ4KL2MPX" style="font-family:monospace;letter-spacing:.05em" ${linkedTxn?'readonly':''} />
+         <div class="helper">${linkedTxn?'This receipt was selected from the live Paybill feed.':'Check your M-Pesa Paybill portal or business SMS inbox. This creates an audit trail.'}</div>
       </div>
       <div class="field">
         <label>Amount actually received on Paybill (KES)</label>
-        <input id="conf-amt" type="number" value="${r.grand_total}" step="0.01" />
+         <input id="conf-amt" type="number" value="${linkedTxn ? Number(linkedTxn.amount||0) : Number(r.actual_amount_received||r.grand_total||0)}" step="0.01" ${linkedTxn?'readonly':''} />
         <div class="helper">Confirm what actually arrived. If it matches the expected total, leave as-is.</div>
       </div>
       <div class="field"><label>Admin notes</label>
@@ -5943,9 +6052,14 @@ async function confirmRecon(id){
     actions:[
       { label:'Cancel', onClick: closeModal },
       { label:' Confirm received', cls:'btn-primary', onClick: async () => {
-        const ref = $('conf-ref').value.trim();
-        const actualAmt = Number($('conf-amt').value)||r.grand_total;
-        const notes = $('conf-notes').value.trim();
+         const ref = $('conf-ref').value.trim();
+         const actualAmt = Number($('conf-amt').value)||r.grand_total;
+         const notes = $('conf-notes').value.trim();
+         if(!ref) return toast('Select or enter the M-Pesa receipt before confirming.','error');
+         const matchingTxn = (state.data.mpesaTransactions||[]).find(t=>cleanMpesaReference(t.trans_id)===cleanMpesaReference(ref));
+         if(matchingTxn && matchingTxn.group_id!==r.group_id) return toast('This M-Pesa receipt belongs to a different group.','error');
+         const duplicateRecon = (state.data.reconciliations||[]).find(x=>x.id!==r.id && cleanMpesaReference(x.mpesa_reference)===cleanMpesaReference(ref));
+         if(duplicateRecon) return toast('This M-Pesa receipt is already linked to another remittance.','error');
         const upd = {
           status: 'confirmed',
           confirmed_by: state.staff.id,
@@ -5955,10 +6069,16 @@ async function confirmRecon(id){
           confirmed_at: new Date().toISOString()
         };
         const { error } = await sb.from('pb_reconciliations').update(upd).eq('id',id);
-        if(error) return toast(error.message,'error');
-        Object.assign(r, upd);
-        audit('recon_confirm','pb_reconciliations',id,null,upd);
-        closeModal(); render(); toast('Remittance confirmed ','success');
+         if(error) return toast(error.message,'error');
+         Object.assign(r, upd);
+         const markError = matchingTxn
+           ? await markMpesaTxnAllocated(matchingTxn.id, 'pb_reconciliations', id)
+           : null;
+         audit('recon_confirm','pb_reconciliations',id,null,upd);
+         closeModal(); render();
+         toast(markError
+           ? 'Remittance confirmed. Refresh once to update the M-Pesa status.'
+           : 'Remittance confirmed and M-Pesa payment reconciled.','success');
       }}
     ]
   });
@@ -6092,7 +6212,7 @@ function pageMpesaPayments(){
         <tbody>
           ${groupRemit.length ? groupRemit.map(t=>{
             const g = state.data.groups.find(x=>x.id===t.group_id);
-            const linked = state.data.reconciliations.find(r=>r.mpesa_reference===t.trans_id);
+            const linked = reconciliationForMpesaTransaction(t);
             return `<tr>
               <td style="font-size:12px">${formatMpesaDateTime(t)}</td>
               <td><b>${g?.name||' - '}</b></td>
@@ -6101,8 +6221,8 @@ function pageMpesaPayments(){
               <td class="num"><b style="color:var(--success)">${KES(t.amount)}</b></td>
               <td><code style="font-family:monospace;font-size:11px">${t.trans_id||' - '}</code></td>
               <td>${linked
-                ?`<span class="badge b-green"> ${KES(linked.grand_total)} on ${fmtDate(linked.meeting_date)}</span>`
-                :`<span class="badge b-grey">Not yet logged</span>`}</td>
+                ?`<span class="badge ${linked.status==='confirmed'?'b-green':'b-yellow'}">${linked.status==='confirmed'?'Reconciled':'Awaiting admin'} - ${KES(linked.grand_total)} on ${fmtDate(linked.meeting_date)}</span>`
+                :`<span class="badge b-grey">Awaiting remittance log</span>`}</td>
             </tr>`;
           }).join(''):`<tr><td colspan="7"><div class="empty"><h4>No group remittances</h4><p>When the chairman sends the day's total to the Paybill using the group's M-Pesa code, it will appear here.</p></div></td></tr>`}
         </tbody>
@@ -6303,6 +6423,7 @@ async function markMpesaTxnAllocated(txnId, table, recordId){
   }).eq('id', txnId);
   const t = state.data.mpesaTransactions.find(x=>x.id===txnId);
   if(t && !error){ t.status='allocated'; t.allocated_table=table; t.allocated_id=recordId; }
+  return error || null;
 }
 
 /* ----- Admin: manually match an unmatched M-Pesa transaction to a group/member ----- */
