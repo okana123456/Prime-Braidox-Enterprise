@@ -14,7 +14,7 @@ create table if not exists public.pb_group_remittance_link_backup_20260814 (
   backed_up_at timestamptz not null default now()
 );
 
-create temporary table tmp_pb_exact_remittance_links on commit drop as
+create table if not exists public.pb_group_remittance_exact_links_20260814 as
 with transaction_rows as (
   select
     t.*,
@@ -76,7 +76,7 @@ select
   t.status,
   t.allocated_table,
   t.allocated_id
-from tmp_pb_exact_remittance_links x
+from public.pb_group_remittance_exact_links_20260814 x
 join public.pb_reconciliations r on r.id = x.reconciliation_id
 join public.pb_mpesa_transactions t on t.id = x.transaction_id
 on conflict (reconciliation_id) do nothing;
@@ -85,7 +85,7 @@ update public.pb_reconciliations r
 set
   mpesa_reference = x.trans_id,
   actual_amount_received = x.amount
-from tmp_pb_exact_remittance_links x
+from public.pb_group_remittance_exact_links_20260814 x
 where r.id = x.reconciliation_id;
 
 update public.pb_mpesa_transactions t
@@ -94,7 +94,7 @@ set
   allocated_table = 'pb_reconciliations',
   allocated_id = x.reconciliation_id,
   allocated_at = now()
-from tmp_pb_exact_remittance_links x
+from public.pb_group_remittance_exact_links_20260814 x
 where t.id = x.transaction_id;
 
 select
@@ -103,6 +103,6 @@ select
   false as savings_changed,
   false as repayments_changed,
   false as loan_balances_changed
-from tmp_pb_exact_remittance_links;
+from public.pb_group_remittance_exact_links_20260814;
 
 commit;

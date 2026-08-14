@@ -5688,6 +5688,15 @@ function pageReconciliation(){
       </div>
     </div>
 
+    <div class="card card-pad" style="margin-bottom:16px">
+      <div class="field" style="margin:0">
+        <label for="remittance-search">Search remittances</label>
+        <input id="remittance-search" type="search" placeholder="Type group name, M-Pesa code, receipt, or officer..." autocomplete="off" oninput="filterRemittanceRows(this.value)" />
+        <div class="helper">Results are filtered instantly while you type. Pressing Enter is not required.</div>
+      </div>
+      <div id="remittance-search-empty" class="muted" style="display:none;margin-top:10px;font-size:12px">No remittance records match your search.</div>
+    </div>
+
     ${unlinkedReceived.length ? `
     <div class="card" style="margin-bottom:16px;border-color:var(--info)">
       <div class="card-head" style="border-color:var(--info);background:var(--info-50)">
@@ -5700,7 +5709,8 @@ function pageReconciliation(){
         <thead><tr><th>Date and time</th><th>Group</th><th>M-Pesa code</th><th>Receipt</th><th class="num">Received</th><th></th></tr></thead>
         <tbody>${unlinkedReceived.map(t=>{
           const g = state.data.groups.find(x=>x.id===t.group_id);
-          return `<tr>
+          const searchText = [g?.name, g?.group_code, t.account_reference, t.trans_id].filter(Boolean).join(' ');
+          return `<tr class="remittance-search-row" data-remittance-search="${escapeHtml(searchText.toLowerCase())}">
             <td style="font-size:12px">${formatMpesaDateTime(t)}</td>
             <td><b>${g?.name||'Unknown group'}</b></td>
             <td><code style="font-family:monospace;font-size:11px">${g?.group_code||t.account_reference||' - '}</code></td>
@@ -5739,7 +5749,8 @@ function pageReconciliation(){
             : r.amount_matched==='no'
             ? '<span class="badge b-red"> Differs</span>'
             : '<span class="badge b-grey">Pending</span>';
-          return `<tr>
+          const searchText = [g?.name, g?.group_code, off?.full_name, r.mpesa_reference, r.status].filter(Boolean).join(' ');
+          return `<tr class="remittance-search-row" data-remittance-search="${escapeHtml(searchText.toLowerCase())}">
              <td>${fmtDate(r.meeting_date)}</td>
              <td><b>${g?.name||' - '}</b></td>
              <td><code style="font-family:monospace;font-size:11px">${r.mpesa_reference||'Not linked'}</code></td>
@@ -5771,7 +5782,8 @@ function pageReconciliation(){
           const mpesaRef = r.mpesa_reference
             ? `<code style="font-family:monospace;font-size:11px;background:var(--surface-2);padding:1px 5px;border-radius:3px">${r.mpesa_reference}</code>`
             : '';
-          return `<tr>
+          const searchText = [g?.name, g?.group_code, off?.full_name, r.mpesa_reference, r.status].filter(Boolean).join(' ');
+          return `<tr class="remittance-search-row" data-remittance-search="${escapeHtml(searchText.toLowerCase())}">
             <td>${fmtDate(r.meeting_date)}</td>
             <td>${g?.name||' - '}</td>
             <td style="font-size:12px;color:var(--text-muted)">${off?.full_name||' - '}</td>
@@ -5787,6 +5799,19 @@ function pageReconciliation(){
       </table></div>
     </div>
   `;
+}
+
+function filterRemittanceRows(value){
+  const query = String(value || '').trim().toLowerCase();
+  const rows = [...document.querySelectorAll('.remittance-search-row')];
+  let visible = 0;
+  rows.forEach(row => {
+    const matches = !query || String(row.dataset.remittanceSearch || '').includes(query);
+    row.style.display = matches ? '' : 'none';
+    if(matches) visible++;
+  });
+  const empty = $('remittance-search-empty');
+  if(empty) empty.style.display = rows.length && !visible ? 'block' : 'none';
 }
 
 function openReconForm(preselectedGroupId='', preselectedTxnId=''){
