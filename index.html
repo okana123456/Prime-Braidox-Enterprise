@@ -3748,8 +3748,7 @@ function loanActions(ev, id){
     { label:'View schedule', onClick: ()=>showLoanSchedule(l) },
     { label:'Download 14-day demand letter', onClick: ()=>downloadDemandLetter(l.id) },
     ...(canRepay && l.status==='active' ? [
-      { label:'Record Repayment', onClick: ()=>openStandaloneRepayment(l.id, l.member_id) },
-      { label:'Record Saving', onClick: ()=>openStandaloneSaving(l.member_id, l.group_id) }
+      { label:'Record Repayment + Saving', onClick: ()=>openCombinedRepaymentSaving(l.id, l.member_id) }
     ] : []),
     ...(isAdmin && l.status==='active' ? [
       { label:'Transfer Loan', onClick: ()=>openLoanTransfer(l) },
@@ -7435,6 +7434,190 @@ function srCalcSplit(ir){
   const principal = +(amount - interest).toFixed(2);
   const pi = document.getElementById('sr-principal'); if(pi) pi.textContent = KES(principal);
   const ii = document.getElementById('sr-interest'); if(ii) ii.textContent = KES(interest);
+}
+
+function openCombinedRepaymentSaving(loanId, memberId){
+  const ln = state.data.loans.find(l => l.id === loanId);
+  const mem = state.data.members.find(m => m.id === (memberId || ln?.member_id));
+  if(!ln || !mem){ toast('Loan or member not found.', 'error'); return; }
+
+  const group = state.data.groups.find(g => g.id === (ln.group_id || mem.group_id));
+  const paid = loanPaid(ln.id);
+  const repaymentPaid = loanRepaymentPaid(ln.id);
+  const outstanding = Math.max(0, Number(ln.total_payable) - paid);
+  const expectedNow = Math.min(outstanding, loanExpectedCollectionAsOf(ln) || Number(ln.weekly_installment) || 0);
+  const arrears = loanArrearsAsOf(ln);
+  const currentSavings = memberSavings(mem.id);
+  const savingsTarget = Number(state.settings?.savings_threshold || 900);
+  const savingsRemaining = Math.max(0, savingsTarget - currentSavings);
+  const ir = Number(ln.total_payable) ? (Number(ln.total_payable) - Number(ln.loan_value)) / Number(ln.total_payable) : 0;
+  const today = todayISO();
+
+  modal({
+    title: `Record Repayment and Saving - ${mem.full_name}`,
+    body: `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;font-size:13px">
+        <div class="grid-2" style="gap:8px">
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem.full_name}</div></div>
+          <div><div class="muted" style="font-size:11px">Group</div><div style="font-weight:600">${group?.name || ' - '}</div></div>
+          <div><div class="muted" style="font-size:11px">Asset</div><div style="font-weight:600">${ln.asset_name}</div></div>
+          <div><div class="muted" style="font-size:11px">Loan start date</div><div style="font-weight:600">${fmtDate(ln.start_date)}</div></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;font-size:13px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Savings position</div>
+        <div class="grid-3" style="gap:8px">
+          <div><div class="muted" style="font-size:11px">Current savings</div><div style="font-weight:700;color:var(--success)">${KES(currentSavings)}</div></div>
+          <div><div class="muted" style="font-size:11px">Savings target</div><div style="font-weight:700">${KES(savingsTarget)}</div></div>
+          <div><div class="muted" style="font-size:11px">Remaining to target</div><div style="font-weight:700;color:${savingsRemaining>0?'var(--warning)':'var(--success)'}">${KES(savingsRemaining)}</div></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Loan position</div>
+        <div class="grid-3" style="gap:8px">
+          <div><div class="muted" style="font-size:11px">Total payable</div><div style="font-weight:700">${KES(ln.total_payable)}</div></div>
+          <div><div class="muted" style="font-size:11px">Repayments received</div><div style="font-weight:700;color:var(--success)">${KES(repaymentPaid)}</div></div>
+          <div><div class="muted" style="font-size:11px">Outstanding balance</div><div style="font-weight:700;color:var(--danger)">${KES(outstanding)}</div></div>
+          <div><div class="muted" style="font-size:11px">Weekly installment</div><div style="font-weight:700">${KES(ln.weekly_installment)}</div></div>
+          <div><div class="muted" style="font-size:11px">Expected now</div><div style="font-weight:700;color:var(--warning)">${KES(expectedNow)}</div></div>
+          <div><div class="muted" style="font-size:11px">Arrears</div><div style="font-weight:700;color:${arrears>0?'var(--danger)':'var(--success)'}">${KES(arrears)}</div></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Loan Repayment (KES)</label>
+          <input type="number" id="crs-repayment" min="0" max="${outstanding}" step="0.01" value="${expectedNow || ''}" oninput="crsUpdateSummary(${ir},${outstanding},${currentSavings})" />
+        </div>
+        <div class="field">
+          <label>Ordinary Saving (KES)</label>
+          <input type="number" id="crs-saving" min="0" step="0.01" placeholder="0" oninput="crsUpdateSummary(${ir},${outstanding},${currentSavings})" />
+        </div>
+      </div>
+      <div class="field">
+        <label>Transaction Date *</label>
+        <input type="date" id="crs-date" value="${today}" max="${today}" />
+      </div>
+      <div class="field">
+        <label>Savings Note</label>
+        <input id="crs-notes" placeholder="Optional note for the savings entry" />
+      </div>
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-top:2px;font-size:13px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">Entry summary</div>
+        <div class="grid-3" style="gap:8px">
+          <div><div class="muted" style="font-size:11px">Principal</div><div id="crs-principal" style="font-weight:700">${KES(+(expectedNow*(1-ir)).toFixed(2))}</div></div>
+          <div><div class="muted" style="font-size:11px">Interest</div><div id="crs-interest" style="font-weight:700;color:var(--warning)">${KES(+(expectedNow*ir).toFixed(2))}</div></div>
+          <div><div class="muted" style="font-size:11px">Total received</div><div id="crs-total" style="font-weight:700;color:var(--success)">${KES(expectedNow)}</div></div>
+          <div><div class="muted" style="font-size:11px">Savings after entry</div><div id="crs-savings-after" style="font-weight:700;color:var(--success)">${KES(currentSavings)}</div></div>
+          <div><div class="muted" style="font-size:11px">Loan balance after entry</div><div id="crs-balance-after" style="font-weight:700;color:var(--danger)">${KES(Math.max(0,outstanding-expectedNow))}</div></div>
+        </div>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:8px">The repayment and ordinary saving will appear as separate ledger entries for the same member and date.</div>
+    `,
+    actions: [
+      { label: 'Cancel', cls: 'btn-outline', onClick: closeModal },
+      { label: 'Save Entries', cls: 'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const repaymentAmount = Number(document.getElementById('crs-repayment')?.value) || 0;
+        const savingAmount = Number(document.getElementById('crs-saving')?.value) || 0;
+        const date = document.getElementById('crs-date')?.value || today;
+        const notes = document.getElementById('crs-notes')?.value?.trim() || null;
+
+        if(repaymentAmount < 0 || savingAmount < 0) return toast('Amounts cannot be negative.', 'error');
+        if(repaymentAmount <= 0 && savingAmount <= 0) return toast('Enter a repayment, a saving, or both.', 'error');
+        if(repaymentAmount > outstanding + 0.01) return toast(`Repayment exceeds the outstanding balance of ${KES(outstanding)}.`, 'error');
+        if(date > today) return toast('The transaction date cannot be in the future.', 'error');
+
+        const status = state.staff.role === 'admin' ? 'approved' : 'pending';
+        const interest = +(repaymentAmount * ir).toFixed(2);
+        const principal = +(repaymentAmount - interest).toFixed(2);
+        const repaymentRow = repaymentAmount > 0 ? {
+          business_id: state.staff.business_id || null,
+          loan_id: ln.id,
+          member_id: mem.id,
+          group_id: group?.id || ln.group_id || mem.group_id || null,
+          meeting_date: date,
+          amount: repaymentAmount,
+          principal,
+          interest,
+          recorded_by: state.staff.id,
+          status
+        } : null;
+        const savingRow = savingAmount > 0 ? {
+          business_id: state.staff.business_id || null,
+          member_id: mem.id,
+          group_id: group?.id || ln.group_id || mem.group_id || null,
+          meeting_date: date,
+          amount: savingAmount,
+          type: 'savings',
+          recorded_by: state.staff.id,
+          notes,
+          status
+        } : null;
+
+        let savedRepayment = null;
+        let savedSaving = null;
+        if(repaymentRow){
+          const { data, error } = await sb.from('pb_repayments').insert(repaymentRow).select().single();
+          if(error) return toast('Repayment could not be saved: ' + error.message, 'error');
+          savedRepayment = data;
+        }
+        if(savingRow){
+          const { data, error } = await sb.from('pb_savings').insert(savingRow).select().single();
+          if(error){
+            if(savedRepayment){
+              const rollback = await sb.from('pb_repayments').delete().eq('id', savedRepayment.id);
+              if(rollback.error){
+                state.data.repayments.unshift(savedRepayment);
+                audit('combined_entry_partial_failure', 'pb_repayments', savedRepayment.id, null, { saving_error:error.message, rollback_error:rollback.error.message });
+                return toast('The repayment was saved, but the saving failed and could not be rolled back. Please review the repayment ledger before trying again.', 'error');
+              }
+            }
+            return toast('Saving could not be saved. No combined entry was recorded: ' + error.message, 'error');
+          }
+          savedSaving = data;
+        }
+
+        if(savedRepayment){
+          state.data.repayments.unshift(savedRepayment);
+          audit('combined_repayment', 'pb_repayments', savedRepayment.id, null, repaymentRow);
+        }
+        if(savedSaving){
+          state.data.savings.unshift(savedSaving);
+          audit('combined_saving', 'pb_savings', savedSaving.id, null, savingRow);
+        }
+
+        if(savedRepayment && paid + repaymentAmount >= Number(ln.total_payable)){
+          const { error } = await sb.from('pb_loans').update({ status:'completed' }).eq('id', ln.id);
+          if(!error) ln.status = 'completed';
+        }
+
+        closeModal();
+        render();
+        const entryLabel = savedRepayment && savedSaving
+          ? 'Repayment and saving'
+          : savedRepayment
+            ? 'Repayment'
+            : 'Saving';
+        toast(state.staff.role === 'admin'
+          ? `${entryLabel} recorded successfully.`
+          : `${entryLabel} submitted for approval.`, 'success');
+      }}
+    ]
+  });
+}
+
+function crsUpdateSummary(ir, outstanding, currentSavings){
+  const repayment = Number(document.getElementById('crs-repayment')?.value) || 0;
+  const saving = Number(document.getElementById('crs-saving')?.value) || 0;
+  const interest = +(repayment * ir).toFixed(2);
+  const principal = +(repayment - interest).toFixed(2);
+  const principalEl = document.getElementById('crs-principal'); if(principalEl) principalEl.textContent = KES(principal);
+  const interestEl = document.getElementById('crs-interest'); if(interestEl) interestEl.textContent = KES(interest);
+  const totalEl = document.getElementById('crs-total'); if(totalEl) totalEl.textContent = KES(repayment + saving);
+  const savingsAfterEl = document.getElementById('crs-savings-after'); if(savingsAfterEl) savingsAfterEl.textContent = KES(Number(currentSavings||0) + saving);
+  const balanceAfterEl = document.getElementById('crs-balance-after'); if(balanceAfterEl) balanceAfterEl.textContent = KES(Math.max(0, Number(outstanding||0) - repayment));
 }
 
 function openStandaloneSaving(memberId, groupId){
