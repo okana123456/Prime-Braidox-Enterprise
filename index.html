@@ -1771,6 +1771,49 @@ function purchaseProfitSummary(purchases){
   return { rows, cost, salesValue, profit, quantity, marginPct };
 }
 
+function orderAssetLines(order){
+  if(!order?.notes) return null;
+  try{
+    const parsed = JSON.parse(order.notes);
+    return parsed && Array.isArray(parsed.assets) && parsed.assets.length ? parsed.assets : null;
+  }catch{ return null; }
+}
+
+function issuedLoanProfitRows(loans){
+  return (loans||[]).flatMap(loan => {
+    const order = state.data.orders.find(o => o.id === loan.order_id);
+    const lines = orderAssetLines(order);
+    if(lines){
+      return lines.map(line => {
+        const asset = state.data.inventory.find(i => i.id === line.asset_id || (i.name||'').toLowerCase() === String(line.asset_name||'').toLowerCase());
+        const quantity = Number(line.quantity || 1);
+        const costPerUnit = Number(asset?.buying_price || 0);
+        const loanPrice = Number(line.loan_price || asset?.loan_price || 0);
+        const totalCost = costPerUnit * quantity;
+        const loanValue = loanPrice * quantity;
+        return { loan, order, assetName:line.asset_name || asset?.name || loan.asset_name, quantity, costPerUnit, loanPrice, totalCost, loanValue, profit:loanValue-totalCost };
+      });
+    }
+    const asset = state.data.inventory.find(i => i.id === loan.asset_id || (i.name||'').toLowerCase() === String(loan.asset_name||'').toLowerCase());
+    const quantity = Number(loan.asset_quantity || 1);
+    const loanValue = Number(loan.loan_value || 0);
+    const costPerUnit = Number(asset?.buying_price || 0);
+    const loanPrice = quantity ? loanValue / quantity : loanValue;
+    const totalCost = costPerUnit * quantity;
+    return [{ loan, order, assetName:loan.asset_name || asset?.name || 'Asset loan', quantity, costPerUnit, loanPrice, totalCost, loanValue, profit:loanValue-totalCost }];
+  });
+}
+
+function issuedLoanProfitSummary(loans){
+  const rows = issuedLoanProfitRows(loans);
+  const cost = rows.reduce((a,b)=>a+b.totalCost,0);
+  const loanValue = rows.reduce((a,b)=>a+b.loanValue,0);
+  const profit = rows.reduce((a,b)=>a+b.profit,0);
+  const quantity = rows.reduce((a,b)=>a+b.quantity,0);
+  const marginPct = cost > 0 ? (profit / cost) * 100 : 0;
+  return { rows, cost, loanValue, profit, quantity, marginPct };
+}
+
 function pageDashboard(){
   const isAdmin = state.staff.role === 'admin';
   if(!isAdmin){ pageOfficerDashboard(); return; }
@@ -5466,6 +5509,11 @@ function pagePurchases(){
     return date ? inRange(date) : _purchaseDateFilter === 'all';
   });
   const summary = purchaseProfitSummary(list);
+  const issuedLoansInPeriod = state.data.loans.filter(l => {
+    const date = (l.start_date||'').slice(0,10);
+    return date ? inRange(date) : false;
+  });
+  const issuedProfit = issuedLoanProfitSummary(issuedLoansInPeriod);
   const byMonth = {};
   list.forEach(p => {
     const k = (p.received_on||'').slice(0,7) || 'Undated';
@@ -5489,7 +5537,28 @@ function pagePurchases(){
       <div class="kpi k-danger"><div class="l">Purchase cost</div><div class="v">${KES(summary.cost)}</div><div class="d">${list.length} purchase${list.length!==1?'s':''} - ${summary.quantity} unit${summary.quantity!==1?'s':''}</div></div>
       <div class="kpi k-primary"><div class="l">Expected sales value</div><div class="v">${KES(summary.salesValue)}</div><div class="d">Using current loan prices</div></div>
       <div class="kpi k-success"><div class="l">Expected product profit</div><div class="v">${KES(summary.profit)}</div><div class="d">${summary.marginPct.toFixed(1)}% gross margin on selected purchases</div></div>
+      <div class="kpi k-success"><div class="l">Actual issued product profit</div><div class="v">${KES(issuedProfit.profit)}</div><div class="d">${issuedLoansInPeriod.length} loan${issuedLoansInPeriod.length!==1?'s':''} issued in selected period</div></div>
     </div>
+    ${issuedProfit.rows.length ? `<div class="card" style="margin-bottom:14px">
+      <div class="card-head"><h3>Items actually issued as loans</h3><div class="sub">Profit from assets already given to members in the selected period.</div></div>
+      <div class="table-wrap" style="border:none;border-radius:0;border-top:1px solid var(--border)">
+        <table class="tbl">
+          <thead><tr><th>Date</th><th>Member</th><th>Asset</th><th class="num">Qty</th><th class="num">Cost</th><th class="num">Loan value</th><th class="num">Product profit</th></tr></thead>
+          <tbody>${issuedProfit.rows.map(row=>{
+            const mbr = state.data.members.find(m=>m.id===row.loan.member_id);
+            return `<tr>
+              <td>${fmtDate(row.loan.start_date)}</td>
+              <td>${mbr?.full_name||' - '}</td>
+              <td>${row.assetName||' - '}</td>
+              <td class="num">${row.quantity}</td>
+              <td class="num">${KES(row.totalCost)}</td>
+              <td class="num">${KES(row.loanValue)}</td>
+              <td class="num"><b style="color:${row.profit>=0?'var(--success)':'var(--danger)'}">${KES(row.profit)}</b></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+    </div>` : ''}
     ${months.length ? months.map(m => {
       const rows = byMonth[m];
       const total = rows.reduce((a,b)=>a+Number(b.total_cost||0),0);
@@ -6617,14 +6686,10 @@ function pageAccounting(){
   const loansIssued = state.data.loans.filter(l=>inRange(l.start_date||''));
   const totalLoansOut = loansIssued.reduce((a,b)=>a+Number(b.loan_value||0),0);
   const totalExpectedReturn = loansIssued.reduce((a,b)=>a+Number(b.total_payable||0),0);
+  const issuedProfit = issuedLoanProfitSummary(loansIssued);
 
   // === COST OF ASSETS ISSUED (COGS) ===
-  const totalCOGS = loansIssued.reduce((a, l) => {
-    const invItem = state.data.inventory.find(i => i.id === l.asset_id || i.name === l.asset_name);
-    const buyingPrice = Number(invItem?.buying_price || 0);
-    const qty = Number(l.asset_quantity || 1);
-    return a + buyingPrice * qty;
-  }, 0);
+  const totalCOGS = issuedProfit.cost;
 
   // === OPERATIONAL EXPENSES ===
   const expensesInPeriod = (state.data.expenses||[]).filter(e=>inRange(e.date||''));
@@ -6671,6 +6736,7 @@ function pageAccounting(){
       <div class="kpi k-primary"><div class="l">Expected return</div><div class="v">${KES(totalExpectedReturn)}</div><div class="d">Interest: ${KES(totalExpectedReturn-totalLoansOut)}</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
       <div class="kpi k-success"><div class="l">Purchase product profit</div><div class="v">${KES(purchaseProfit.profit)}</div><div class="d">${purchaseProfit.marginPct.toFixed(1)}% margin from selected purchases</div></div>
+      <div class="kpi k-success"><div class="l">Actual issued product profit</div><div class="v">${KES(issuedProfit.profit)}</div><div class="d">${issuedProfit.quantity} issued unit${issuedProfit.quantity!==1?'s':''}</div></div>
       <div class="kpi k-danger"><div class="l">Operational Expenses</div><div class="v">${KES(totalExpensesOut)}</div><div class="d">${expensesInPeriod.length} entr${expensesInPeriod.length!==1?'ies':'y'}</div></div>
       <div class="kpi k-warn"><div class="l">Cost of Assets Issued</div><div class="v">${KES(totalCOGS)}</div><div class="d">${loansIssued.length} loan${loansIssued.length!==1?'s':''} issued</div></div>
     </div>
@@ -6689,6 +6755,8 @@ function pageAccounting(){
           <tr><td style="padding:6px 0;color:var(--text-muted)">Expected sales value of purchased stock</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(purchaseProfit.salesValue)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Expected product profit from purchases</td><td style="text-align:right;font-weight:700;color:${purchaseProfit.profit>=0?'var(--success)':'var(--danger)'}">${KES(purchaseProfit.profit)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalLoansOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Actual cost of assets issued</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(issuedProfit.cost)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Actual product profit from issued loans</td><td style="text-align:right;font-weight:700;color:${issuedProfit.profit>=0?'var(--success)':'var(--danger)'}">${KES(issuedProfit.profit)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Operational expenses (${expensesInPeriod.length})</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalExpensesOut)}</td></tr>
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">-${KES(totalPurchasesOut+totalLoansOut+totalExpensesOut)}</td></tr>
           <tr style="background:var(--surface-2)"><td style="padding:10px 6px;font-weight:800;font-size:14px;border-radius:var(--radius-sm) 0 0 var(--radius-sm)">Net cash movement</td><td style="text-align:right;font-weight:800;font-size:16px;padding:10px 6px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:${(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn-totalPurchasesOut-totalLoansOut-totalExpensesOut)>=0?'var(--success)':'var(--danger)'}">${KES(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn-totalPurchasesOut-totalLoansOut-totalExpensesOut)}</td></tr>
@@ -8006,6 +8074,24 @@ function exportAccountingReport(){
       };
     }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseLineRows), 'Purchase profit');
+  const issuedProfitRows = issuedLoanProfitRows(state.data.loans.filter(l=>inRange(l.start_date||''))).map(row => {
+    const member = state.data.members.find(m=>m.id===row.loan.member_id);
+    const group = state.data.groups.find(g=>g.id===row.loan.group_id);
+    return {
+      Date:row.loan.start_date,
+      Member:member?.full_name||'',
+      Group:group?.name||'',
+      Asset:row.assetName,
+      Quantity:row.quantity,
+      CostPerUnit:row.costPerUnit,
+      LoanPrice:row.loanPrice,
+      TotalCost:row.totalCost,
+      LoanValue:row.loanValue,
+      ProductProfit:row.profit,
+      LoanStatus:row.loan.status
+    };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issuedProfitRows), 'Issued product profit');
   // Loans
   const lnRows = state.data.loans.filter(l=>inRange(l.start_date||'')).map(l=>{
     const m=state.data.members.find(x=>x.id===l.member_id);
