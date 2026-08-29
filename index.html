@@ -1664,6 +1664,8 @@ let _loanDateFilter = 'all';
 let _loanCustomStart = '', _loanCustomEnd = '';
 let _mpSavingsFilter = 'all';
 let _mpSavingsCustomStart = '', _mpSavingsCustomEnd = '';
+let _purchaseDateFilter = 'month';
+let _purchaseCustomStart = '', _purchaseCustomEnd = '';
 
 function dashDateRange(){
   const now = new Date();
@@ -1719,6 +1721,54 @@ function arrearDateRange(){
     return { start: _arrearsCustomStart||today, end: _arrearsCustomEnd||today };
   }
   return { start: '2000-01-01', end: '2999-12-31' };
+}
+
+function purchaseDateRange(){
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0,10);
+  const today = iso(now);
+  if(_purchaseDateFilter==='today') return { start: today, end: today };
+  if(_purchaseDateFilter==='yesterday'){
+    const y = new Date(now); y.setDate(y.getDate()-1); const yd = iso(y);
+    return { start: yd, end: yd };
+  }
+  if(_purchaseDateFilter==='week'){
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { start: iso(d), end: today };
+  }
+  if(_purchaseDateFilter==='month'){
+    const d = new Date(now); d.setDate(1);
+    return { start: iso(d), end: today };
+  }
+  if(_purchaseDateFilter==='3months'){
+    const d = new Date(now); d.setMonth(d.getMonth()-3);
+    return { start: iso(d), end: today };
+  }
+  if(_purchaseDateFilter==='custom') return { start: _purchaseCustomStart||today, end: _purchaseCustomEnd||today };
+  return { start:'2000-01-01', end:'2999-12-31' };
+}
+
+function purchaseLineProfit(line){
+  const qty = Number(line?.quantity || 0);
+  const unitCost = Number(line?.cost_per_unit || 0);
+  const cost = Number(line?.subtotal || 0) || qty * unitCost;
+  const asset = state.data.inventory.find(i => i.id === line?.asset_id || (i.name||'').toLowerCase() === String(line?.asset_name||'').toLowerCase());
+  const loanPrice = Number(asset?.loan_price || 0) || unitCost;
+  const salesValue = qty * loanPrice;
+  const profit = salesValue - cost;
+  return { qty, unitCost, cost, loanPrice, salesValue, profit };
+}
+
+function purchaseProfitSummary(purchases){
+  const rows = (purchases||[]).flatMap(p => (p.items||[]).map(line => ({ purchase:p, line, ...purchaseLineProfit(line) })));
+  const lineCost = rows.reduce((a,b)=>a+b.cost,0);
+  const headerCost = (purchases||[]).reduce((a,b)=>a+Number(b.total_cost||0),0);
+  const cost = headerCost || lineCost;
+  const salesValue = rows.reduce((a,b)=>a+b.salesValue,0);
+  const profit = rows.length ? salesValue - cost : 0;
+  const quantity = rows.reduce((a,b)=>a+b.qty,0);
+  const marginPct = cost > 0 ? (profit / cost) * 100 : 0;
+  return { rows, cost, salesValue, profit, quantity, marginPct };
 }
 
 function pageDashboard(){
@@ -5407,7 +5457,15 @@ function openSupplierForm(s=null){
  * PAGE: PURCHASES
  * ===================================================================== */
 function pagePurchases(){
-  const list = (state.data.purchases||[]).slice().sort((a,b)=> new Date(b.received_on)-new Date(a.received_on));
+  const { start, end } = purchaseDateRange();
+  const inRange = date => date >= start && date <= end;
+  const filterBtns = [['today','Today'],['yesterday','Yesterday'],['week','This week'],['month','This month'],['3months','Last 3 months'],['all','All time'],['custom','Custom']];
+  const allPurchases = (state.data.purchases||[]).slice().sort((a,b)=> new Date(b.received_on)-new Date(a.received_on));
+  const list = allPurchases.filter(p => {
+    const date = (p.received_on||'').slice(0,10);
+    return date ? inRange(date) : _purchaseDateFilter === 'all';
+  });
+  const summary = purchaseProfitSummary(list);
   const byMonth = {};
   list.forEach(p => {
     const k = (p.received_on||'').slice(0,7) || 'Undated';
@@ -5416,35 +5474,58 @@ function pagePurchases(){
   const months = Object.keys(byMonth).sort().reverse();
   $('page').innerHTML = `
     <div class="page-head">
-      <div><h1>Purchases</h1><div class="desc">Stock received from suppliers, with full line-item history.</div></div>
+      <div><h1>Purchases</h1><div class="desc">Stock received from suppliers, cost control and expected product profit.</div></div>
       <div class="actions"><button class="btn btn-primary" onclick="openPurchaseForm()">New purchase</button></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      ${filterBtns.map(([k,l])=>`<button class="btn btn-sm ${_purchaseDateFilter===k?'btn-primary':'btn-outline'}" onclick="_purchaseDateFilter='${k}';pagePurchases()">${l}</button>`).join('')}
+      ${_purchaseDateFilter==='custom'?`
+        <input type="date" id="pur-custom-start" value="${_purchaseCustomStart}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
+        <span class="muted" style="font-size:12px">to</span>
+        <input type="date" id="pur-custom-end" value="${_purchaseCustomEnd}" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)" />
+      `:''}
+    </div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:16px">
+      <div class="kpi k-danger"><div class="l">Purchase cost</div><div class="v">${KES(summary.cost)}</div><div class="d">${list.length} purchase${list.length!==1?'s':''} - ${summary.quantity} unit${summary.quantity!==1?'s':''}</div></div>
+      <div class="kpi k-primary"><div class="l">Expected sales value</div><div class="v">${KES(summary.salesValue)}</div><div class="d">Using current loan prices</div></div>
+      <div class="kpi k-success"><div class="l">Expected product profit</div><div class="v">${KES(summary.profit)}</div><div class="d">${summary.marginPct.toFixed(1)}% gross margin on selected purchases</div></div>
     </div>
     ${months.length ? months.map(m => {
       const rows = byMonth[m];
       const total = rows.reduce((a,b)=>a+Number(b.total_cost||0),0);
+      const monthProfit = purchaseProfitSummary(rows);
       const label = m === 'Undated' ? 'Undated' : new Date(m+'-01').toLocaleDateString('en-KE',{month:'long',year:'numeric'});
       return `<div class="card" style="margin-bottom:14px">
         <div class="card-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none'" style="cursor:pointer">
           <h3>${label}</h3>
-          <div class="muted" style="font-size:12px">${rows.length} purchase${rows.length>1?'s':''} - total ${KES(total)}</div>
+          <div class="muted" style="font-size:12px">${rows.length} purchase${rows.length>1?'s':''} - cost ${KES(total)} - expected profit ${KES(monthProfit.profit)}</div>
         </div>
         <div class="table-wrap" style="border:none;border-radius:0;border-top:1px solid var(--border)">
           <table class="tbl">
-            <thead><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th class="num">Lines</th><th class="num">Total cost</th><th>Received by</th><th></th></tr></thead>
-            <tbody>${rows.map(p => `<tr>
+            <thead><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th class="num">Lines</th><th class="num">Total cost</th><th class="num">Expected sales</th><th class="num">Expected profit</th><th>Received by</th><th></th></tr></thead>
+            <tbody>${rows.map(p => {
+              const ps = purchaseProfitSummary([p]);
+              return `<tr>
               <td>${fmtDate(p.received_on)}</td>
               <td>${p.supplier_name||' - '}</td>
               <td>${p.invoice_no||' - '}</td>
               <td class="num">${(p.items||[]).length}</td>
               <td class="num">${KES(p.total_cost)}</td>
+              <td class="num">${KES(ps.salesValue)}</td>
+              <td class="num"><b style="color:${ps.profit>=0?'var(--success)':'var(--danger)'}">${KES(ps.profit)}</b></td>
               <td>${p.received_by_name||' - '}</td>
               <td><button class="act-btn" onclick="purchaseActions(event,'${p.id}')"> - - - </button></td>
-            </tr>`).join('')}</tbody>
+            </tr>`;
+            }).join('')}</tbody>
           </table>
         </div>
       </div>`;
     }).join('') : `<div class="card"><div class="empty"><h4>No purchases recorded</h4><p>Receive stock from a supplier to update inventory and cost prices.</p></div></div>`}
   `;
+  const purStartEl = document.getElementById('pur-custom-start');
+  const purEndEl = document.getElementById('pur-custom-end');
+  if(purStartEl) purStartEl.addEventListener('change', e => { _purchaseCustomStart = e.target.value; pagePurchases(); });
+  if(purEndEl) purEndEl.addEventListener('change', e => { _purchaseCustomEnd = e.target.value; pagePurchases(); });
 }
 function purchaseActions(ev, id){
   const p = state.data.purchases.find(x=>x.id===id);
@@ -5458,18 +5539,24 @@ function purchaseActions(ev, id){
   ]);
 }
 function viewPurchase(p){
+  const summary = purchaseProfitSummary([p]);
   modal({
     title:`Purchase ${p.invoice_no||''}`, size:'lg',
     body:`<table class="summary-table">
       <tr><td>Supplier</td><td>${p.supplier_name||' - '}</td></tr>
       <tr><td>Date received</td><td>${fmtDate(p.received_on)}</td></tr>
       <tr><td>Total cost</td><td><b>${KES(p.total_cost)}</b></td></tr>
+      <tr><td>Expected sales value</td><td><b>${KES(summary.salesValue)}</b></td></tr>
+      <tr><td>Expected product profit</td><td><b style="color:${summary.profit>=0?'var(--success)':'var(--danger)'}">${KES(summary.profit)}</b></td></tr>
       <tr><td>Notes</td><td>${p.notes||' - '}</td></tr>
     </table>
     <h5 style="margin-top:14px;font-size:12px;color:var(--text-subtle);text-transform:uppercase">Line items</h5>
     <div class="table-wrap"><table class="tbl">
-      <thead><tr><th>Asset</th><th class="num">Qty</th><th class="num">Cost / unit</th><th class="num">Subtotal</th><th>Batch</th></tr></thead>
-      <tbody>${(p.items||[]).map(it=>`<tr><td>${it.asset_name}</td><td class="num">${it.quantity}</td><td class="num">${KES(it.cost_per_unit)}</td><td class="num">${KES(it.subtotal)}</td><td>${it.batch_no||' - '}</td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No line items recorded.</td></tr>'}</tbody>
+      <thead><tr><th>Asset</th><th class="num">Qty</th><th class="num">Cost / unit</th><th class="num">Loan price</th><th class="num">Subtotal</th><th class="num">Expected profit</th><th>Batch</th></tr></thead>
+      <tbody>${(p.items||[]).map(it=>{
+        const lp = purchaseLineProfit(it);
+        return `<tr><td>${it.asset_name}</td><td class="num">${it.quantity}</td><td class="num">${KES(lp.unitCost)}</td><td class="num">${KES(lp.loanPrice)}</td><td class="num">${KES(lp.cost)}</td><td class="num"><b style="color:${lp.profit>=0?'var(--success)':'var(--danger)'}">${KES(lp.profit)}</b></td><td>${it.batch_no||' - '}</td></tr>`;
+      }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">No line items recorded.</td></tr>'}</tbody>
     </table></div>`,
     actions:[{ label:'Close', cls:'btn-primary', onClick: closeModal }]
   });
@@ -6524,6 +6611,7 @@ function pageAccounting(){
   // === EXPENSES (Purchases) ===
   const purchasesInPeriod = state.data.purchases.filter(p=>inRange(p.received_on||''));
   const totalPurchasesOut = purchasesInPeriod.reduce((a,b)=>a+Number(b.total_cost||0),0);
+  const purchaseProfit = purchaseProfitSummary(purchasesInPeriod);
 
   // === LOANS ISSUED ===
   const loansIssued = state.data.loans.filter(l=>inRange(l.start_date||''));
@@ -6582,6 +6670,7 @@ function pageAccounting(){
       <div class="kpi k-warn"><div class="l">Principal disbursed</div><div class="v">${KES(totalLoansOut)}</div><div class="d">${loansIssued.length} loans</div></div>
       <div class="kpi k-primary"><div class="l">Expected return</div><div class="v">${KES(totalExpectedReturn)}</div><div class="d">Interest: ${KES(totalExpectedReturn-totalLoansOut)}</div></div>
       <div class="kpi k-danger"><div class="l">Purchases (cash out)</div><div class="v">${KES(totalPurchasesOut)}</div><div class="d">${purchasesInPeriod.length} purchases</div></div>
+      <div class="kpi k-success"><div class="l">Purchase product profit</div><div class="v">${KES(purchaseProfit.profit)}</div><div class="d">${purchaseProfit.marginPct.toFixed(1)}% margin from selected purchases</div></div>
       <div class="kpi k-danger"><div class="l">Operational Expenses</div><div class="v">${KES(totalExpensesOut)}</div><div class="d">${expensesInPeriod.length} entr${expensesInPeriod.length!==1?'ies':'y'}</div></div>
       <div class="kpi k-warn"><div class="l">Cost of Assets Issued</div><div class="v">${KES(totalCOGS)}</div><div class="d">${loansIssued.length} loan${loansIssued.length!==1?'s':''} issued</div></div>
     </div>
@@ -6597,6 +6686,8 @@ function pageAccounting(){
           <tr><td style="padding:6px 0;color:var(--text-muted)">Asset deposit installments</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(totalDepositsIn)}</td></tr>
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total inflows</td><td style="text-align:right;font-weight:700;color:var(--success);border-top:2px solid var(--border)">${KES(totalSavingsIn+totalRepayIn+totalRegFees+totalDepositsIn)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Stock purchased</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalPurchasesOut)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Expected sales value of purchased stock</td><td style="text-align:right;font-weight:600;color:var(--success)">${KES(purchaseProfit.salesValue)}</td></tr>
+          <tr><td style="padding:6px 0;color:var(--text-muted)">Expected product profit from purchases</td><td style="text-align:right;font-weight:700;color:${purchaseProfit.profit>=0?'var(--success)':'var(--danger)'}">${KES(purchaseProfit.profit)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Loans disbursed</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalLoansOut)}</td></tr>
           <tr><td style="padding:6px 0;color:var(--text-muted)">Operational expenses (${expensesInPeriod.length})</td><td style="text-align:right;font-weight:600;color:var(--danger)">-${KES(totalExpensesOut)}</td></tr>
           <tr><td style="padding:6px 0;border-top:2px solid var(--border);font-weight:700">Total outflows</td><td style="text-align:right;font-weight:700;color:var(--danger);border-top:2px solid var(--border)">-${KES(totalPurchasesOut+totalLoansOut+totalExpensesOut)}</td></tr>
@@ -7891,9 +7982,30 @@ function exportAccountingReport(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(repRows), 'Repayments');
   // Purchases
   const purRows = state.data.purchases.filter(p=>inRange(p.received_on||'')).map(p=>({
-    Date:p.received_on,Supplier:p.supplier_name,Invoice:p.invoice_no,Total:Number(p.total_cost)
+    Date:p.received_on,Supplier:p.supplier_name,Invoice:p.invoice_no,TotalCost:Number(p.total_cost),
+    ExpectedSalesValue:purchaseProfitSummary([p]).salesValue,
+    ExpectedProductProfit:purchaseProfitSummary([p]).profit
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purRows), 'Purchases');
+  const purchaseLineRows = state.data.purchases
+    .filter(p=>inRange(p.received_on||''))
+    .flatMap(p => (p.items||[]).map(line => {
+      const lp = purchaseLineProfit(line);
+      return {
+        Date:p.received_on,
+        Supplier:p.supplier_name,
+        Invoice:p.invoice_no,
+        Asset:line.asset_name,
+        Quantity:Number(line.quantity||0),
+        CostPerUnit:lp.unitCost,
+        LoanPrice:lp.loanPrice,
+        TotalCost:lp.cost,
+        ExpectedSalesValue:lp.salesValue,
+        ExpectedProductProfit:lp.profit,
+        Batch:line.batch_no||''
+      };
+    }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseLineRows), 'Purchase profit');
   // Loans
   const lnRows = state.data.loans.filter(l=>inRange(l.start_date||'')).map(l=>{
     const m=state.data.members.find(x=>x.id===l.member_id);
