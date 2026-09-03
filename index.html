@@ -2185,6 +2185,7 @@ function pageGroups(){
   if(q) groups = groups.filter(g =>
     (g.name||'').toLowerCase().includes(q) ||
     (g.chairman_name||'').toLowerCase().includes(q) ||
+    (g.secretary_name||'').toLowerCase().includes(q) ||
     String(g.group_number||'').includes(q)
   );
   groups = groups.slice().sort((a,b)=>(dayWeight[a.meeting_day]||8)-(dayWeight[b.meeting_day]||8));
@@ -2208,14 +2209,14 @@ function pageGroups(){
     <div class="toolbar">
       <div class="search-box grow">
         <span class="ic">${ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')}</span>
-        <input id="grp-search" placeholder="Search by name, chairman or group number" value="${state._groupSearch||''}"/>
+        <input id="grp-search" placeholder="Search by name, chairman, secretary or group number" value="${state._groupSearch||''}"/>
       </div>
     </div>
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
           <th>#</th><th>Name</th><th>M-Pesa Code</th><th>Meeting day</th><th>Chairman</th>
-          <th>Treasurer</th><th>Officer</th><th class="num">Members</th><th class="num">Savings</th>
+          <th>Secretary</th><th>Treasurer</th><th>Officer</th><th class="num">Members</th><th class="num">Savings</th>
           <th>Status</th><th></th>
         </tr></thead>
         <tbody>
@@ -2228,6 +2229,7 @@ function pageGroups(){
               <td>${g.group_code ? `<code style="font-family:monospace;font-size:12px;background:var(--surface-2);padding:2px 6px;border-radius:4px">${g.group_code}</code>` : `<span class="muted" style="font-size:11px"> -  not set  - </span>`}</td>
               <td>${g.meeting_day||' - '} ${g.meeting_time?' -  '+g.meeting_time:''}</td>
               <td>${g.chairman_name||' - '}<div class="muted" style="font-size:11px">${g.chairman_phone||''}</div></td>
+              <td>${g.secretary_name||' - '}<div class="muted" style="font-size:11px">${g.secretary_phone||''}</div></td>
               <td>${g.treasurer_name||' - '}<div class="muted" style="font-size:11px">${g.treasurer_phone||''}</div></td>
               <td>${off?.full_name||' - '}</td>
               <td class="num">${mc}</td>
@@ -2235,7 +2237,7 @@ function pageGroups(){
               <td><span class="badge ${g.status==='active'?'b-green':'b-grey'}">${g.status}</span></td>
               <td><button class="act-btn" onclick="groupActions(event,'${g.id}')"> - - - </button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="10"><div class="empty"><h4>No groups found</h4><p>${q ? 'No groups match your search.' : 'Create your first chama group to start onboarding members.'}</p></div></td></tr>`}
+          }).join('') || `<tr><td colspan="12"><div class="empty"><h4>No groups found</h4><p>${q ? 'No groups match your search.' : 'Create your first chama group to start onboarding members.'}</p></div></td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2279,7 +2281,11 @@ async function backfillGroupCodes(){
   toast(`Generated M-Pesa codes for ${okCount} group(s).`,'success');
 }
 function openGroupForm(g=null){
-  const officers = state.data.staff.filter(s=>s.role==='officer' && s.status==='active');
+  const isAdmin = state.staff.role === 'admin';
+  const officers = isAdmin
+    ? state.data.staff.filter(s=>s.role==='officer' && s.status==='active')
+    : state.data.staff.filter(s=>s.id===state.staff.id && s.role==='officer' && s.status==='active');
+  const selectedOfficerId = isAdmin ? (g?.officer_id || '') : state.staff.id;
   modal({
     title: g ? 'Edit group' : 'Register new group',
     body: `<form id="gform">
@@ -2312,14 +2318,19 @@ function openGroupForm(g=null){
         <div class="field"><label>Chairman phone</label><input name="chairman_phone" value="${g?.chairman_phone||''}" /></div>
       </div>
       <div class="grid-2">
+        <div class="field"><label>Secretary name</label><input name="secretary_name" value="${g?.secretary_name||''}" /></div>
+        <div class="field"><label>Secretary phone</label><input name="secretary_phone" value="${g?.secretary_phone||''}" /></div>
+      </div>
+      <div class="grid-2">
         <div class="field"><label>Treasurer name</label><input name="treasurer_name" value="${g?.treasurer_name||''}" /></div>
         <div class="field"><label>Treasurer phone</label><input name="treasurer_phone" value="${g?.treasurer_phone||''}" /></div>
       </div>
       <div class="field"><label>Assigned loan officer</label>
         <select name="officer_id">
-          <option value=""> -  Unassigned  - </option>
-          ${officers.map(o => `<option value="${o.id}" ${g?.officer_id===o.id?'selected':''}>${o.full_name}</option>`).join('')}
+          ${isAdmin ? '<option value=""> -  Unassigned  - </option>' : ''}
+          ${officers.map(o => `<option value="${o.id}" ${selectedOfficerId===o.id?'selected':''}>${o.full_name}</option>`).join('')}
         </select>
+        ${!isAdmin ? '<div class="helper">Officers can only assign groups to themselves.</div>' : ''}
       </div>
       <div class="field"><label>Status</label>
         <select name="status">
@@ -2335,7 +2346,7 @@ function openGroupForm(g=null){
         const fd = new FormData($('gform'));
         const row = Object.fromEntries(fd.entries());
         row.group_number = parseInt(row.group_number);
-        row.officer_id = row.officer_id || null;
+        row.officer_id = isAdmin ? (row.officer_id || null) : state.staff.id;
         if(g){
           // Preserve existing group_code; if somehow missing (legacy record), assign one now
           if(!g.group_code) row.group_code = generateGroupCode();
