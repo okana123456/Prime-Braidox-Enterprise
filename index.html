@@ -2484,6 +2484,7 @@ function memberActions(ev, id){
     ] : []),
     { label:'Edit details', onClick: ()=>openMemberEdit(m) },
     'sep',...(isAdmin ? [
+      { label:'Transfer member to group', onClick: ()=>openMemberTransfer(m) },
       { label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(
         `Deactivate "${m.full_name}"? They will no longer appear in active member lists.`,
         async()=>{
@@ -2512,6 +2513,101 @@ function memberActions(ev, id){
       }
     ] : [])
   ]);
+}
+
+function openMemberTransfer(member){
+  if(!member){ toast('Member not found.', 'error'); return; }
+  if(state.staff.role !== 'admin'){ toast('Only administrators can transfer members.', 'error'); return; }
+  const currentGroup = state.data.groups.find(g => g.id === member.group_id);
+  const activeLoans = state.data.loans.filter(l => l.member_id === member.id && l.status === 'active');
+  const groupOptions = state.data.groups
+    .filter(g => g.status !== 'inactive')
+    .map(g => {
+      const officer = state.data.staff.find(s => s.id === g.officer_id);
+      const current = g.id === member.group_id ? ' (current)' : '';
+      return `<option value="${g.id}" ${g.id===member.group_id?'selected':''}>${g.name}${current}${officer ? ' - ' + officer.full_name : ''}</option>`;
+    }).join('');
+
+  modal({
+    title: `Transfer member - ${member.full_name}`,
+    body: `
+      <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:14px;font-size:13px">
+        <div class="grid-2" style="gap:8px">
+          <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:700">${member.full_name}</div></div>
+          <div><div class="muted" style="font-size:11px">Current group</div><div style="font-weight:700">${currentGroup?.name || ' - '}</div></div>
+          <div><div class="muted" style="font-size:11px">Active loans affected</div><div style="font-weight:700">${activeLoans.length}</div></div>
+          <div><div class="muted" style="font-size:11px">Savings history</div><div style="font-weight:700;color:var(--success)">Kept unchanged</div></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Transfer to group *</label>
+        <select id="mt-group" onchange="updateMemberTransferPreview('${member.id}')">
+          <option value="">-- Select group --</option>
+          ${groupOptions}
+        </select>
+      </div>
+      <div id="mt-preview" class="auth-info" style="margin-top:12px"></div>
+      <div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">
+        This updates the member's current group and any active loan group assignment for future collections. Historical savings and repayments remain in the group where they were recorded.
+      </div>
+    `,
+    actions:[
+      { label:'Cancel', cls:'btn-outline', onClick: closeModal },
+      { label:'Transfer member', cls:'btn-primary', onClick: async () => {
+        if(!(await ensureFreshToken())) return;
+        const newGroupId = document.getElementById('mt-group')?.value || '';
+        if(!newGroupId) return toast('Please select the new group.', 'error');
+        if(newGroupId === member.group_id) return toast('This member is already in that group.', 'warn');
+        const newGroup = state.data.groups.find(g => g.id === newGroupId);
+        if(!newGroup) return toast('Selected group was not found.', 'error');
+
+        const oldGroupId = member.group_id;
+        const oldLoanSnapshot = activeLoans.map(l => ({ id:l.id, group_id:l.group_id, officer_id:l.officer_id }));
+        const loanUpdate = { group_id:newGroupId };
+        if(newGroup.officer_id) loanUpdate.officer_id = newGroup.officer_id;
+
+        const memberRes = await sb.from('pb_members').update({ group_id:newGroupId }).eq('id', member.id);
+        if(memberRes.error) return toast('Member transfer failed: ' + memberRes.error.message, 'error');
+
+        if(activeLoans.length){
+          const loanIds = activeLoans.map(l => l.id);
+          const loanRes = await sb.from('pb_loans').update(loanUpdate).in('id', loanIds);
+          if(loanRes.error){
+            await sb.from('pb_members').update({ group_id:oldGroupId }).eq('id', member.id);
+            return toast('Active loan transfer failed; member group was restored. ' + loanRes.error.message, 'error');
+          }
+          activeLoans.forEach(l => Object.assign(l, loanUpdate));
+        }
+
+        member.group_id = newGroupId;
+        audit('member_group_transfer','pb_members',member.id,
+          { group_id:oldGroupId, active_loans:oldLoanSnapshot },
+          { group_id:newGroupId, active_loan_update:loanUpdate });
+        closeModal();
+        render();
+        toast(`Member transferred to ${newGroup.name}.`, 'success');
+      }}
+    ]
+  });
+  setTimeout(() => updateMemberTransferPreview(member.id), 0);
+}
+
+function updateMemberTransferPreview(memberId){
+  const member = state.data.members.find(m => m.id === memberId);
+  const targetGroupId = document.getElementById('mt-group')?.value || '';
+  const preview = document.getElementById('mt-preview');
+  if(!member || !preview) return;
+  const currentGroup = state.data.groups.find(g => g.id === member.group_id);
+  const targetGroup = state.data.groups.find(g => g.id === targetGroupId);
+  if(!targetGroup){
+    preview.innerHTML = 'Select the destination group to preview the transfer.';
+    return;
+  }
+  const officer = state.data.staff.find(s => s.id === targetGroup.officer_id);
+  const activeLoans = state.data.loans.filter(l => l.member_id === member.id && l.status === 'active');
+  preview.innerHTML = targetGroupId === member.group_id
+    ? `Current group remains <b>${targetGroup.name}</b>. Choose a different group to transfer.`
+    : `Transfer from <b>${currentGroup?.name || 'current group'}</b> to <b>${targetGroup.name}</b>. ${activeLoans.length ? `${activeLoans.length} active loan${activeLoans.length===1?'':'s'} will follow this member${officer ? ` under <b>${officer.full_name}</b>` : ''}.` : 'No active loan will be moved.'}`;
 }
 
 /* ----- Member registration wizard (4 steps) ----- */
