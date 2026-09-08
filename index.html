@@ -2407,8 +2407,8 @@ function pageMembers(){
     <div class="table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>Name</th><th>ID number</th><th>Group</th><th class="num">Savings</th>
-          <th>Eligibility</th><th>Loan</th><th></th>
+          <th class="sticky-name">Name</th><th>ID number</th><th>Group</th><th class="num">Savings</th>
+          <th>Eligibility</th><th class="num">Loan balance</th><th></th>
         </tr></thead>
         <tbody>
           ${paged.map(m => {
@@ -2416,13 +2416,14 @@ function pageMembers(){
             const sv = memberSavings(m.id);
             const elig = memberEligible(m.id);
             const ln = memberLoan(m.id);
+            const loanBal = ln ? loanOutstanding(ln) : 0;
             return `<tr style="cursor:pointer" onclick="state._memberProfileTab='overview'; go('memberProfile', {memberId: '${m.id}'})">
-              <td><b>${m.full_name}</b><div class="muted" style="font-size:11px">${m.phone||''}</div></td>
+              <td class="sticky-name"><b>${m.full_name}</b><div class="muted" style="font-size:11px">${m.phone||''}</div></td>
               <td>${m.national_id}</td>
               <td>${g?.name||' - '}</td>
               <td class="num">${KES(sv)}</td>
               <td>${elig?'<span class="badge b-green">Eligible</span>':'<span class="badge b-grey">Not yet</span>'}</td>
-              <td>${ln?'<span class="badge b-blue">Active</span>':'<span class="badge b-grey">None</span>'}</td>
+              <td class="num">${ln?`<b>${KES(loanBal)}</b><div class="muted" style="font-size:11px">${ln.asset_name||'Active loan'}</div>`:'<span class="badge b-grey">None</span>'}</td>
               <td onclick="event.stopPropagation()"><button class="act-btn" onclick="memberActions(event,'${m.id}')"> - - - </button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="7"><div class="empty"><h4>No members found</h4><p>Register a member to one of your active groups.</p></div></td></tr>`}
