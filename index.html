@@ -2461,6 +2461,8 @@ function memberActions(ev, id){
   const m = state.data.members.find(x=>x.id===id);
   if(!m) return;
   const isAdmin = state.staff.role==='admin';
+  const canRecordCollections = isAdmin || state.staff.role === 'officer';
+  const activeLoan = memberLoan(id);
 
   // Check if any other member shares the same national_id or full_name+phone
   const duplicates = state.data.members.filter(x =>
@@ -2476,6 +2478,9 @@ function memberActions(ev, id){
 
   showActMenu(ev, [
     { label:'View profile', onClick: ()=>{ go('memberProfile', { memberId: id }); } },
+    ...(canRecordCollections ? [
+      { label: activeLoan ? 'Record Repayment + Saving' : 'Record Saving', onClick: ()=>openMemberCollectionEntry(id) }
+    ] : []),
     { label:'Edit details', onClick: ()=>openMemberEdit(m) },
     'sep',...(isAdmin ? [
       { label:'Deactivate member', danger:true, onClick: ()=>confirmDialog(
@@ -7606,6 +7611,14 @@ function srCalcSplit(ir){
   const ii = document.getElementById('sr-interest'); if(ii) ii.textContent = KES(interest);
 }
 
+function openMemberCollectionEntry(memberId){
+  const member = state.data.members.find(m => m.id === memberId);
+  if(!member){ toast('Member not found.', 'error'); return; }
+  const loan = memberLoan(memberId);
+  if(loan) openCombinedRepaymentSaving(loan.id, memberId);
+  else openStandaloneSaving(memberId, member.group_id);
+}
+
 function openCombinedRepaymentSaving(loanId, memberId){
   const ln = state.data.loans.find(l => l.id === loanId);
   const mem = state.data.members.find(m => m.id === (memberId || ln?.member_id));
@@ -7794,6 +7807,10 @@ function openStandaloneSaving(memberId, groupId){
   const mem = state.data.members.find(m => m.id === memberId);
   if(!mem){ toast('Member not found.', 'error'); return; }
   const group = state.data.groups.find(g => g.id === (groupId || mem.group_id));
+  const currentSavings = memberSavings(mem.id);
+  const savingsTarget = Number(state.settings?.savings_threshold || 900);
+  const savingsRemaining = Math.max(0, savingsTarget - currentSavings);
+  const today = todayISO();
   modal({
     title: `Record Saving - ${mem.full_name}`,
     body: `
@@ -7801,12 +7818,20 @@ function openStandaloneSaving(memberId, groupId){
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div><div class="muted" style="font-size:11px">Member</div><div style="font-weight:600">${mem.full_name}</div></div>
           <div><div class="muted" style="font-size:11px">Group</div><div style="font-weight:600">${group?.name || ' - '}</div></div>
-          <div><div class="muted" style="font-size:11px">Current savings</div><div style="font-weight:600;color:var(--success)">${KES(memberSavings(mem.id))}</div></div>
+          <div><div class="muted" style="font-size:11px">Current savings</div><div style="font-weight:600;color:var(--success)">${KES(currentSavings)}</div></div>
           <div><div class="muted" style="font-size:11px">Recorded by</div><div style="font-weight:600">${state.staff.full_name}</div></div>
         </div>
       </div>
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Savings position</div>
+        <div class="grid-3" style="gap:8px">
+          <div><div class="muted" style="font-size:11px">Current savings</div><div style="font-weight:700;color:var(--success)">${KES(currentSavings)}</div></div>
+          <div><div class="muted" style="font-size:11px">Savings target</div><div style="font-weight:700">${KES(savingsTarget)}</div></div>
+          <div><div class="muted" style="font-size:11px">Remaining to target</div><div style="font-weight:700;color:${savingsRemaining>0?'var(--warning)':'var(--success)'}">${KES(savingsRemaining)}</div></div>
+        </div>
+      </div>
       <div class="field"><label>Saving Amount (KES) *</label><input type="number" id="ss-amount" min="1" step="0.01" placeholder="Enter amount" /></div>
-      <div class="field"><label>Date</label><input type="date" id="ss-date" value="${todayISO()}" /></div>
+      <div class="field"><label>Date</label><input type="date" id="ss-date" value="${today}" max="${today}" /></div>
       <div class="field"><label>Notes</label><input id="ss-notes" placeholder="Optional note" /></div>
     `,
     actions: [
@@ -7814,9 +7839,10 @@ function openStandaloneSaving(memberId, groupId){
       { label: 'Save Saving', cls: 'btn-primary', onClick: async () => {
         if(!(await ensureFreshToken())) return;
         const amount = Number(document.getElementById('ss-amount')?.value) || 0;
-        const date = document.getElementById('ss-date')?.value || todayISO();
+        const date = document.getElementById('ss-date')?.value || today;
         const notes = document.getElementById('ss-notes')?.value?.trim() || null;
         if(amount <= 0) return toast('Please enter a valid saving amount.', 'error');
+        if(date > today) return toast('The transaction date cannot be in the future.', 'error');
         const row = {
           business_id: state.staff.business_id || null,
           member_id: mem.id,
